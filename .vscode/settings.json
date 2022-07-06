@@ -1,0 +1,4 @@
+{
+    "git.ignoreMissingGitWarning": true,
+    "rust-analyzer.checkOnSave.command": "clippy",
+}
