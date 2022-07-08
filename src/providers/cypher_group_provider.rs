@@ -1,5 +1,4 @@
 use cypher::states::CypherGroup;
-use log::{info, warn};
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::sync::{
@@ -7,7 +6,7 @@ use tokio::sync::{
     Mutex,
 };
 
-use crate::{accounts_cache::AccountsCache, utils::get_zero_copy_account, MarketMakerError};
+use crate::{accounts_cache::AccountsCache, utils::get_zero_copy_account, CypherInteractiveError};
 
 pub struct CypherGroupProvider {
     cache: Arc<AccountsCache>,
@@ -53,14 +52,14 @@ impl CypherGroupProvider {
             tokio::select! {
                 key = receiver.recv() => {
                     if key.is_err() {
-                        warn!("[CGP] There was an error while processing a provider update, restarting loop.");
+                        println!("[CGP] There was an error while processing a provider update, restarting loop.");
                         continue;
                     } else {
                         let res = self.process_updates(key.unwrap()).await;
                         match res {
                             Ok(_) => (),
                             Err(_) => {
-                                info!(
+                                println!(
                                     "[CGP] There was an error sending an update about the cypher group.",
                                 );
                             },
@@ -73,13 +72,13 @@ impl CypherGroupProvider {
             }
 
             if shutdown_signal {
-                info!("[CGP] Received shutdown signal, stopping.",);
+                println!("[CGP] Received shutdown signal, stopping.",);
                 break;
             }
         }
     }
 
-    async fn process_updates(&self, key: Pubkey) -> Result<(), MarketMakerError> {
+    async fn process_updates(&self, key: Pubkey) -> Result<(), CypherInteractiveError> {
         if key == self.pubkey {
             let ai = self.cache.get(&key).unwrap();
 
@@ -90,11 +89,11 @@ impl CypherGroupProvider {
                     return Ok(());
                 }
                 Err(_) => {
-                    warn!(
+                    println!(
                         "[CGP] Failed to send message about cypher account with key {}",
                         self.pubkey
                     );
-                    return Err(MarketMakerError::ChannelSendError);
+                    return Err(CypherInteractiveError::ChannelSend);
                 }
             }
         }

@@ -1,16 +1,16 @@
-use crate::{
-    accounts_cache::AccountsCache,
-    serum_slab::{OrderBookOrder, Slab},
-    MarketMakerError,
-};
 use arrayref::array_refs;
-use log::{info, warn};
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::{
     broadcast::{channel, Receiver, Sender},
     Mutex,
+};
+
+use crate::{
+    accounts_cache::AccountsCache,
+    serum_slab::{OrderBookOrder, Slab},
+    CypherInteractiveError,
 };
 
 #[derive(Default)]
@@ -41,7 +41,6 @@ pub struct OrderBookProvider {
     asks: Pubkey,
     coin_lot_size: u64,
     pc_lot_size: u64,
-    coin_decimals: u64,
 }
 
 impl OrderBookProvider {
@@ -57,7 +56,6 @@ impl OrderBookProvider {
             asks: Pubkey::default(),
             coin_lot_size: u64::default(),
             pc_lot_size: u64::default(),
-            coin_decimals: u64::default(),
         }
     }
 
@@ -72,7 +70,6 @@ impl OrderBookProvider {
         asks: Pubkey,
         coin_lot_size: u64,
         pc_lot_size: u64,
-        coin_decimals: u64,
     ) -> Self {
         Self {
             cache,
@@ -85,7 +82,6 @@ impl OrderBookProvider {
             asks,
             coin_lot_size,
             pc_lot_size,
-            coin_decimals,
         }
     }
 
@@ -98,14 +94,14 @@ impl OrderBookProvider {
             tokio::select! {
                 key = receiver.recv() => {
                     if key.is_err() {
-                        warn!("[OBP] There was an error while processing a provider update, restarting loop.");
+                        println!("[OBP] There was an error while processing a provider update, restarting loop.");
                         continue;
                     } else {
                         let res = self.process_updates(key.unwrap()).await;
                         match res {
                             Ok(_) => (),
                             Err(_) => {
-                                warn!(
+                                println!(
                                     "[OBP] There was an error sending an update about the orderbook for market: {}.",
                                     self.market
                                 );
@@ -119,14 +115,14 @@ impl OrderBookProvider {
             }
 
             if shutdown_signal {
-                info!("[OBP] Received shutdown signal, stopping.",);
+                println!("[OBP] Received shutdown signal, stopping.",);
                 break;
             }
         }
     }
 
     #[allow(clippy::ptr_offset_with_cast)]
-    async fn process_updates(self: &Arc<Self>, key: Pubkey) -> Result<(), MarketMakerError> {
+    async fn process_updates(self: &Arc<Self>, key: Pubkey) -> Result<(), CypherInteractiveError> {
         let mut updated: bool = false;
 
         if key == self.bids {
@@ -158,10 +154,10 @@ impl OrderBookProvider {
 
             match res {
                 Ok(_) => {
-                    info!("[OBP] Updated orderbook for market: {}.", self.market);
+                    println!("[OBP] Updated orderbook for market: {}.", self.market);
                 }
                 Err(_) => {
-                    return Err(MarketMakerError::ChannelSendError);
+                    return Err(CypherInteractiveError::ChannelSend);
                 }
             };
         }

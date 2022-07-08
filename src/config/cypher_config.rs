@@ -71,7 +71,7 @@ pub struct CypherOracleConfig {
     pub address: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CypherMarketConfig {
     pub name: String,

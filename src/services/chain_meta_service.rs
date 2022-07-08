@@ -1,4 +1,3 @@
-use log::{info, warn};
 use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClient};
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::hash::Hash;
@@ -44,22 +43,22 @@ impl ChainMetaService {
         let hash = match hash_res {
             Ok(hash) => hash,
             Err(e) => {
-                warn!("[CMS] Failed to fetch recent block hash: {}", e.to_string());
+                println!("[CMS] Failed to fetch recent block hash: {}", e.to_string());
                 return Err(e);
             }
         };
-        info!("[CMS] Fetched recent block hash: {}", hash.0.to_string());
+        println!("[CMS] Fetched recent block hash: {}", hash.0.to_string());
         *self.recent_blockhash.write().await = hash.0;
 
         let slot_res = self.client.get_slot().await;
         let slot = match slot_res {
             Ok(slot) => slot,
             Err(e) => {
-                warn!("[CMS] Failed to fetch recent slot: {}", e.to_string());
+                println!("[CMS] Failed to fetch recent slot: {}", e.to_string());
                 return Err(e);
             }
         };
-        info!("[CMS] Fetched recent slot: {}", slot);
+        println!("[CMS] Fetched recent slot: {}", slot);
         *self.slot.write().await = slot;
 
         Ok(())
@@ -71,7 +70,7 @@ impl ChainMetaService {
             let res = self.update_chain_meta().await;
 
             if res.is_err() {
-                warn!(
+                println!(
                     "[CMS] Couldn't get new chain meta! Error: {}",
                     res.err().unwrap().to_string()
                 );
@@ -90,7 +89,7 @@ impl ChainMetaService {
         tokio::select! {
             _ = cself.update_chain_meta_replay() => {},
             _ = shutdown.recv() => {
-                info!("[CMS] Received shutdown signal, stopping.");
+                println!("[CMS] Received shutdown signal, stopping.");
             }
         }
     }

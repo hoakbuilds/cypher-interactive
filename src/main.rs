@@ -1,16 +1,23 @@
 mod config;
 mod interactive;
+mod handler;
 mod fast_tx_builder;
+mod serum_slab;
+mod utils;
+mod services;
+mod providers;
+mod accounts_cache;
 
 use config::*;
 use interactive::*;
-use fast_tx_builder::*;
 
 use clap::Parser;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use tokio::sync::broadcast::channel;
-use std::{fs::File, str::FromStr, io::{Read, self}, sync::Arc};
-use solana_sdk::{signature::Keypair, signer::Signer, commitment_config::CommitmentConfig};
+use std::{fs::File, str::FromStr, io::Read, sync::Arc};
+use solana_sdk::{signature::Keypair, signer::Signer, commitment_config::CommitmentConfig, pubkey::Pubkey};
+
+use crate::utils::derive_cypher_user_address;
 
 pub const CYPHER_CONFIG_PATH: &str = "./cfg/group.json";
 
@@ -25,10 +32,15 @@ struct Cli {
 
 #[derive(Debug)]
 pub enum CypherInteractiveError {
-    KeypairFileOpenError,
-    KeypairFileReadError,
-    KeypairLoadError,
-    InputError,
+    KeypairFileOpen,
+    KeypairFileRead,
+    KeypairLoad,
+    Input,
+    Airdrop,
+    Deposit,
+    CreateOpenOrders,
+    CouldNotFetchOpenOrders,
+    ChannelSend
 }
 
 #[tokio::main]
@@ -52,26 +64,31 @@ async fn main() {
         CommitmentConfig::confirmed(),
     ));
     println!("Connecting to cluster: {}", cluster);
-    
+
+    let group_config = Arc::new(cypher_config.get_group(&cluster).unwrap());
+    let cypher_group_pk = Pubkey::from_str(&group_config.address).unwrap();
+
+    let cypher_user_pk = derive_cypher_user_address(&cypher_group_pk, &keypair.pubkey()).0;
+
     let (shutdown_send, mut _shutdown_recv) = channel::<bool>(1);
 
     let interactive = Interactive::new(
         Arc::clone(&cypher_config),
+        cluster,
         Arc::clone(&rpc_client),
-        shutdown_send.clone()
+        shutdown_send.clone(),
+        keypair,
+        cypher_user_pk,
+        cypher_group_pk
     );
 
-    let res = interactive.run().await;
-    match res {
+    match interactive.init().await {
         Ok(_) => (),
         Err(e) => {
-            println!("There was an error while running the interactive command line: {:?}", e);
+            println!("There was an error while initializing the interactive command line: {:?}", e);
         }
     }
-
 }
-
-
 
 fn load_keypair(path: &str) -> Result<Keypair, CypherInteractiveError> {
 
@@ -80,8 +97,8 @@ fn load_keypair(path: &str) -> Result<Keypair, CypherInteractiveError> {
     let mut file = match fd {
         Ok(f) => f,
         Err(e) => {
-            println!("Failed to load keypair file: {}", e.to_string());
-            return Err(CypherInteractiveError::KeypairFileOpenError);
+            println!("Failed to load keypair file: {}", e);
+            return Err(CypherInteractiveError::KeypairFileOpen);
         }
     };
 
@@ -89,11 +106,8 @@ fn load_keypair(path: &str) -> Result<Keypair, CypherInteractiveError> {
     let file_read_res = file.read_to_string(file_string);
 
     let _ = if let Err(e) = file_read_res {
-        println!(
-            "Failed to read keypair bytes from keypair file: {}",
-            e.to_string()
-        );
-        return Err(CypherInteractiveError::KeypairFileReadError);
+        println!("Failed to read keypair bytes from keypair file: {}", e);
+        return Err(CypherInteractiveError::KeypairFileRead);
     };
 
     let keypair_bytes: Vec<u8> = file_string
@@ -109,8 +123,8 @@ fn load_keypair(path: &str) -> Result<Keypair, CypherInteractiveError> {
     match keypair {
         Ok(kp) => Ok(kp),
         Err(e) => {
-            println!("Failed to load keypair from bytes: {}", e.to_string());
-            Err(CypherInteractiveError::KeypairLoadError)
+            println!("Failed to load keypair from bytes: {}", e);
+            Err(CypherInteractiveError::KeypairLoad)
         }
     }
 }

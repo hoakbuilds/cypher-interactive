@@ -5,7 +5,6 @@ use tokio::sync::{
 
 use {
     crate::accounts_cache::{AccountState, AccountsCache},
-    log::{info, warn},
     solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClient},
     solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey},
     std::{sync::Arc, time::Duration},
@@ -58,7 +57,7 @@ impl AccountInfoService {
         tokio::select! {
             _ = cself.update_infos_replay() => {},
             _ = shutdown.recv() => {
-                info!("[AIS] Received shutdown signal, stopping.");
+                println!("[AIS] Received shutdown signal, stopping.");
             }
         }
     }
@@ -74,37 +73,35 @@ impl AccountInfoService {
         let res = match rpc_result {
             Ok(r) => r,
             Err(e) => {
-                warn!("[AIS] Could not fetch account infos: {}", e.to_string());
+                println!("[AIS] Could not fetch account infos: {}", e.to_string());
                 return Err(e);
             }
         };
 
         let mut infos = res.value;
-        info!("[AIS] Fetched {} account infos.", infos.len());
+        println!("[AIS] Fetched {} account infos.", infos.len());
 
         while !infos.is_empty() {
             let next = infos.pop().unwrap();
             let i = infos.len();
             let key = account_keys[i];
-            //info!("[AIS] [{}/{}] Fetched account {}", i, infos.len(), key.to_string());
 
-            let info = match next {
+            let println = match next {
                 Some(ai) => ai,
                 None => {
-                    warn!(
-                        "[AIS] [{}/{}] An account info was missing!!",
+                    println!(
+                        "[AIS] [{}/{}] An account println was missing!!",
                         i,
                         infos.len()
                     );
                     continue;
                 }
             };
-            //info!("[AIS] [{}/{}] Account {} has data: {}", i, infos.len(), key.to_string(), base64::encode(&info.data));
 
             let res = self.cache.insert(
                 key,
                 AccountState {
-                    account: info,
+                    account: println,
                     slot: res.context.slot,
                 },
             );
@@ -112,7 +109,7 @@ impl AccountInfoService {
             match res {
                 Ok(_) => (),
                 Err(_) => {
-                    warn!("[AIS] There was an error while inserting account info in the cache.");
+                    println!("[AIS] There was an error while inserting account println in the cache.");
                 }
             };
         }
@@ -129,7 +126,7 @@ impl AccountInfoService {
                 let res = aself.update_infos(i, self.keys.len().min(i + 100)).await;
 
                 if res.is_err() {
-                    warn!(
+                    println!(
                         "[AIS] Failed to update account infos: {}",
                         res.err().unwrap().to_string()
                     );
