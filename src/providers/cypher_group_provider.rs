@@ -100,4 +100,8 @@ impl CypherGroupProvider {
 
         Ok(())
     }
+    
+    pub fn subscribe(&self) -> Receiver<Box<CypherGroup>> {
+        self.sender.subscribe()
+    }
 }

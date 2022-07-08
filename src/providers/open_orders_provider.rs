@@ -103,4 +103,8 @@ impl OpenOrdersProvider {
 
         Ok(())
     }
+
+    pub fn subscribe(&self) -> Receiver<OpenOrders> {
+        self.sender.subscribe()
+    }
 }

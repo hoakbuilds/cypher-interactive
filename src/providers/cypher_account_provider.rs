@@ -96,4 +96,8 @@ impl CypherAccountProvider {
 
         Ok(())
     }
+    
+    pub fn subscribe(&self) -> Receiver<Box<CypherUser>> {
+        self.sender.subscribe()
+    }
 }

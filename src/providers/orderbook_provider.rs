@@ -164,4 +164,8 @@ impl OrderBookProvider {
 
         Ok(())
     }
+    
+    pub fn subscribe(&self) -> Receiver<Arc<OrderBook>> {
+        self.sender.subscribe()
+    }
 }
