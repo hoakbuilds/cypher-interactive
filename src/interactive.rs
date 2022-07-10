@@ -14,9 +14,9 @@ struct CypherMarketContext {
     pub dex_market_state: Option<MarketStateV2>,
     pub open_orders_pk: Pubkey,
     pub open_orders: Option<OpenOrders>,
-    pub open_orders_provider: OpenOrdersProviderWrapper,
+    pub open_orders_provider: Sender<OpenOrders>,
     pub orderbook: Arc<OrderBook>,
-    pub orderbook_provider: OrderBookProviderWrapper
+    pub orderbook_provider: Sender<Arc<OrderBook>>,
 }
 
 

@@ -1,13 +1,52 @@
+use std::{sync::Arc, io::{self, Write}};
+
+use cypher::states::{CypherGroup, CypherUser};
+use serum_dex::{matching::Side, state::{MarketStateV2, OpenOrders}};
+use solana_client::client_error::ClientError;
+use solana_sdk::{hash::Hash, pubkey::Pubkey};
+use tokio::{sync::broadcast::Sender, select};
+
+use crate::{CypherInteractiveError, providers::OrderBook};
+
+
+pub struct CypherContext {
+    pub cypher_user: CypherUser,
+    pub cypher_group: CypherGroup,
+    pub blockhash: Hash, 
+}
+
+pub struct MarketContext {
+    pub dex_market_pk: Pubkey,
+    pub open_orders_pk: Pubkey,
+}
 
 
 pub struct Handler {
-
+    market_context: MarketContext,
+    shutdown: Sender<bool>,
+    open_orders_provider: Sender<OpenOrders>,
+    orderbook_provider: Sender<Arc<OrderBook>>,
+    dex_market: Option<MarketStateV2>,
+    open_orders: Option<OpenOrders>,
+    orderbook: Arc<OrderBook>,    
 }
 
 impl Handler {
-    pub fn new() -> Self {
+    pub fn new(
+        market_context: MarketContext,
+        shutdown: Sender<bool>,
+        open_orders_provider: Sender<OpenOrders>,
+        orderbook_provider: Sender<Arc<OrderBook>>,
+        dex_market: Option<MarketStateV2>
+    ) -> Self {
         Self {
-            
+            market_context,
+            shutdown,
+            open_orders_provider,
+            orderbook_provider,
+            dex_market,
+            open_orders: None,
+            orderbook: Arc::new(OrderBook::default())
         }
     }
 
@@ -181,14 +220,7 @@ impl Handler {
         self: &Arc<Self>,
         order_info: &MarketOrderInfo
     ) -> Result<(), ClientError> {
-        let cypher_markets = self.cypher_markets.read().await;
-        let market = match cypher_markets.iter().find(|m| m.market_config.name == order_info.symbol) {
-            Some(m) => m,
-            None => {
-                println!("Could not find market with symbol {}.", order_info.symbol);
-                return Ok(());
-            },
-        };
+        let ctx = &self.market_context;
 
         Ok(())
     }
