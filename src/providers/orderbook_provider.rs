@@ -14,6 +14,15 @@ use crate::{
 };
 
 #[derive(Default)]
+pub struct OrderBookContext {
+    pub market: Pubkey,
+    pub bids: Pubkey,
+    pub asks: Pubkey,
+    pub coin_lot_size: u64,
+    pub pc_lot_size: u64,
+}
+
+#[derive(Default)]
 pub struct OrderBook {
     pub market: Pubkey,
     pub bids: RwLock<Vec<OrderBookOrder>>,
@@ -23,7 +32,7 @@ pub struct OrderBook {
 impl OrderBook {
     pub fn new(market: Pubkey) -> Self {
         Self {
-            market,
+            market: Pubkey::default(),
             bids: RwLock::new(Vec::new()),
             asks: RwLock::new(Vec::new()),
         }
@@ -35,12 +44,8 @@ pub struct OrderBookProvider {
     sender: Arc<Sender<Arc<OrderBook>>>,
     receiver: Mutex<Receiver<Pubkey>>,
     shutdown_receiver: Mutex<Receiver<bool>>,
-    book: Arc<OrderBook>,
-    market: Pubkey,
-    bids: Pubkey,
-    asks: Pubkey,
-    coin_lot_size: u64,
-    pc_lot_size: u64,
+    books_keys: Vec<OrderBookContext>,
+    books: Vec<Arc<OrderBook>>,
 }
 
 impl OrderBookProvider {
@@ -50,12 +55,8 @@ impl OrderBookProvider {
             sender: Arc::new(channel::<Arc<OrderBook>>(u16::MAX as usize).0),
             receiver: Mutex::new(channel::<Pubkey>(u16::MAX as usize).1),
             shutdown_receiver: Mutex::new(channel::<bool>(1).1),
-            book: Arc::new(OrderBook::default()),
-            market: Pubkey::default(),
-            bids: Pubkey::default(),
-            asks: Pubkey::default(),
-            coin_lot_size: u64::default(),
-            pc_lot_size: u64::default(),
+            books_keys: Vec::new(),
+            books: Vec::new(),
         }
     }
 
@@ -65,23 +66,15 @@ impl OrderBookProvider {
         sender: Arc<Sender<Arc<OrderBook>>>,
         receiver: Receiver<Pubkey>,
         shutdown_receiver: Receiver<bool>,
-        market: Pubkey,
-        bids: Pubkey,
-        asks: Pubkey,
-        coin_lot_size: u64,
-        pc_lot_size: u64,
+        books: Vec<OrderBookContext>,
     ) -> Self {
         Self {
             cache,
             sender,
             receiver: Mutex::new(receiver),
             shutdown_receiver: Mutex::new(shutdown_receiver),
-            book: Arc::new(OrderBook::new(market)),
-            market,
-            bids,
-            asks,
-            coin_lot_size,
-            pc_lot_size,
+            books: Vec::new(),
+            books_keys: books,
         }
     }
 
@@ -101,10 +94,7 @@ impl OrderBookProvider {
                         match res {
                             Ok(_) => (),
                             Err(_) => {
-                                println!(
-                                    "[OBP] There was an error sending an update about the orderbook for market: {}.",
-                                    self.market
-                                );
+                                println!("[OBP] There was an error sending an update about the orderbook.");
                             },
                         }
                     }
@@ -125,41 +115,50 @@ impl OrderBookProvider {
     async fn process_updates(self: &Arc<Self>, key: Pubkey) -> Result<(), CypherInteractiveError> {
         let mut updated: bool = false;
 
-        if key == self.bids {
-            let bid_ai = self.cache.get(&key).unwrap();
-
-            let (_bid_head, bid_data, _bid_tail) = array_refs![&bid_ai.account.data, 5; ..; 7];
-            let bid_data = &mut bid_data[8..].to_vec().clone();
-            let bids = Slab::new(bid_data);
-
-            let obl = bids.get_depth(25, self.pc_lot_size, self.coin_lot_size, false);
-
-            *self.book.bids.write().await = obl;
-            updated = true;
-        } else if key == self.asks {
-            let ask_ai = self.cache.get(&key).unwrap();
-
-            let (_ask_head, ask_data, _ask_tail) = array_refs![&ask_ai.account.data, 5; ..; 7];
-            let ask_data = &mut ask_data[8..].to_vec().clone();
-            let asks = Slab::new(ask_data);
-
-            let obl = asks.get_depth(25, self.pc_lot_size, self.coin_lot_size, true);
-
-            *self.book.asks.write().await = obl;
-            updated = true;
-        }
-
-        if updated {
-            let res = self.sender.send(Arc::clone(&self.book));
-
-            match res {
-                Ok(_) => {
-                    println!("[OBP] Updated orderbook for market: {}.", self.market);
-                }
-                Err(_) => {
-                    return Err(CypherInteractiveError::ChannelSend);
+        for ob_keys in &self.books_keys {
+            let ob = match self.books.iter().find(|ob| ob.market == ob_keys.market) {
+                Some(ob) => ob,
+                None => {
+                    continue;
                 }
             };
+
+            if key == ob_keys.bids {
+                let bid_ai = self.cache.get(&key).unwrap();
+
+                let (_bid_head, bid_data, _bid_tail) = array_refs![&bid_ai.account.data, 5; ..; 7];
+                let bid_data = &mut bid_data[8..].to_vec().clone();
+                let bids = Slab::new(bid_data);
+
+                let obl = bids.get_depth(25, ob_keys.pc_lot_size, ob_keys.coin_lot_size, false);
+
+                *ob.bids.write().await = obl;
+                updated = true;
+            } else if key == ob_keys.asks {
+                let ask_ai = self.cache.get(&key).unwrap();
+
+                let (_ask_head, ask_data, _ask_tail) = array_refs![&ask_ai.account.data, 5; ..; 7];
+                let ask_data = &mut ask_data[8..].to_vec().clone();
+                let asks = Slab::new(ask_data);
+
+                let obl = asks.get_depth(25, ob_keys.pc_lot_size, ob_keys.coin_lot_size, true);
+
+                *ob.asks.write().await = obl;
+                updated = true;
+            }
+
+            if updated {
+                let res = self.sender.send(Arc::clone(&ob));
+
+                match res {
+                    Ok(_) => {
+                        println!("[OBP] Updated orderbook for market: {}.", ob_keys.market);
+                    }
+                    Err(_) => {
+                        return Err(CypherInteractiveError::ChannelSend);
+                    }
+                };
+            }
         }
 
         Ok(())

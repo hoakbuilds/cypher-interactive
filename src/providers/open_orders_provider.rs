@@ -14,7 +14,7 @@ pub struct OpenOrdersProvider {
     sender: Arc<Sender<OpenOrders>>,
     receiver: Mutex<Receiver<Pubkey>>,
     shutdown_receiver: Mutex<Receiver<bool>>,
-    open_orders_pubkey: Pubkey,
+    open_orders_pks: Vec<Pubkey>,
 }
 
 impl OpenOrdersProvider {
@@ -24,7 +24,7 @@ impl OpenOrdersProvider {
             sender: Arc::new(channel::<OpenOrders>(u16::MAX as usize).0),
             receiver: Mutex::new(channel::<Pubkey>(u16::MAX as usize).1),
             shutdown_receiver: Mutex::new(channel::<bool>(1).1),
-            open_orders_pubkey: Pubkey::default(),
+            open_orders_pks: Vec::new(),
         }
     }
 
@@ -33,14 +33,14 @@ impl OpenOrdersProvider {
         sender: Arc<Sender<OpenOrders>>,
         receiver: Receiver<Pubkey>,
         shutdown_receiver: Receiver<bool>,
-        open_orders_pubkey: Pubkey,
+        open_orders_pks: Vec<Pubkey>,
     ) -> Self {
         Self {
             cache,
             sender,
             receiver: Mutex::new(receiver),
             shutdown_receiver: Mutex::new(shutdown_receiver),
-            open_orders_pubkey,
+            open_orders_pks,
         }
     }
 
@@ -60,10 +60,7 @@ impl OpenOrdersProvider {
                         match res {
                             Ok(_) => (),
                             Err(_) => {
-                                println!(
-                                    "[OOAP] There was an error sending an update about the open orders account with key: {}.",
-                                    self.open_orders_pubkey
-                                );
+                                println!("[OOAP] There was an error sending an update about the open orders account.");
                             },
                         }
                     }
@@ -81,24 +78,27 @@ impl OpenOrdersProvider {
     }
 
     async fn process_updates(&self, key: Pubkey) -> Result<(), CypherInteractiveError> {
-        if key == self.open_orders_pubkey {
-            let ai = self.cache.get(&key).unwrap();
 
-            let dex_open_orders: OpenOrders = parse_dex_account(ai.account.data.to_vec());
-
-            match self.sender.send(dex_open_orders) {
-                Ok(_) => {
-                    //println!("[OOAP] Latest price for {}: {}", self.symbol, price);
-                    return Ok(());
+        for oo_pk in &self.open_orders_pks {
+            if key == *oo_pk {
+                let ai = self.cache.get(&key).unwrap();
+    
+                let dex_open_orders: OpenOrders = parse_dex_account(ai.account.data.to_vec());
+    
+                match self.sender.send(dex_open_orders) {
+                    Ok(_) => {
+                        //println!("[OOAP] Latest price for {}: {}", self.symbol, price);
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        println!(
+                            "[OOAP] Failed to send message about the open orders account with key: {}.",
+                            oo_pk
+                        );
+                        return Err(CypherInteractiveError::ChannelSend);
+                    }
                 }
-                Err(_) => {
-                    println!(
-                        "[OOAP] Failed to send message about the open orders account with key: {}.",
-                        self.open_orders_pubkey
-                    );
-                    return Err(CypherInteractiveError::ChannelSend);
-                }
-            }
+            }    
         }
 
         Ok(())

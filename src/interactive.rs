@@ -6,18 +6,19 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{signature::Keypair, pubkey::Pubkey};
 use tokio::{sync::{broadcast::{Sender, channel}, RwLock}, select, task::JoinHandle};
 
-use crate::{CypherInteractiveError, config::{CypherMarketConfig, CypherConfig}, utils::{get_new_order_ix, get_or_init_open_orders, derive_open_orders_address, get_serum_market}, providers::{OrderBook, OrderBookProvider, OpenOrdersProvider, CypherAccountProvider, CypherGroupProvider}, accounts_cache::AccountsCache, services::{ChainMetaService, AccountInfoService}};
+use crate::{CypherInteractiveError, config::{CypherMarketConfig, CypherConfig}, utils::{get_new_order_ix, get_or_init_open_orders, derive_open_orders_address, get_serum_market}, providers::{OrderBook, OrderBookProvider, OpenOrdersProvider, CypherAccountProvider, CypherGroupProvider, OrderBookContext}, accounts_cache::AccountsCache, services::{ChainMetaService, AccountInfoService}};
 
 struct CypherMarketContext {
     pub market_config: CypherMarketConfig,
     pub dex_market_pk: Pubkey,
-    pub dex_market_state: MarketStateV2,
+    pub dex_market_state: Option<MarketStateV2>,
     pub open_orders_pk: Pubkey,
-    pub open_orders: OpenOrders,
+    pub open_orders: Option<OpenOrders>,
     pub open_orders_provider: OpenOrdersProviderWrapper,
-    pub orderbook: OrderBook,
+    pub orderbook: Arc<OrderBook>,
     pub orderbook_provider: OrderBookProviderWrapper
 }
+
 
 pub struct Interactive {
     cypher_config: Arc<CypherConfig>,
@@ -29,15 +30,16 @@ pub struct Interactive {
     accounts_cache: Arc<AccountsCache>,
     accounts_cache_sender: Sender<Pubkey>,
     cypher_market: RwLock<CypherMarketContext>,
-    cypher_user_provider: CypherAccountProviderWrapper,
+    cypher_user_provider: Arc<CypherAccountProvider>,
+    cypher_user_provider_sender: Sender<Box<CypherUser>>,
     cypher_user: RwLock<Option<CypherUser>>,
-    cypher_group_provider: CypherGroupProviderWrapper,
+    cypher_group_provider: Arc<CypherGroupProvider>,
+    cypher_group_provider_sender: Sender<Box<CypherGroup>>,
     cypher_group: RwLock<Option<CypherGroup>>,
     keypair: Keypair,
     cypher_user_pk: Pubkey,
     cypher_group_pk: Pubkey,
     tasks: Vec<JoinHandle<()>>,
-
 }
 
 impl Interactive {
@@ -95,9 +97,11 @@ impl Interactive {
         });
         self.tasks.push(cm_t);
 
+        let market_ctx = self.cypher_market.read().await;
+
         let ob_t = tokio::spawn(
             async move {
-                mc.orderbook_provider.provider.start().await;
+                market_ctx.orderbook_provider.provider.start().await;
             }
         );
 
@@ -119,8 +123,9 @@ impl Interactive {
         &mut self,
     ) -> Result<(), CypherInteractiveError> {
         let mut ais_pks: Vec<Pubkey> = Vec::new();
+        let mut ob_ctxs: Vec<OrderBookContext> = Vec::new();
+
         let group_config = self.cypher_config.get_group(&self.cluster).unwrap();
-        let market = group_config.get_market(market)
 
         // unbounded channel for the accounts cache to send messages whenever a given account gets updated
         let (accounts_cache_s, accounts_cache_r) = channel::<Pubkey>(u16::MAX as usize);
@@ -153,39 +158,49 @@ impl Interactive {
             self.cypher_group_pk,
         ));
 
-        let dex_market_bids = Pubkey::from_str(market.bids.as_str()).unwrap();
-        let dex_market_asks = Pubkey::from_str(market.asks.as_str()).unwrap();
-        let dex_market_pk = Pubkey::from_str(&market.address).unwrap();
-        let dex_market_account = match get_serum_market(
-            Arc::clone(&self.rpc_client),
-            dex_market_pk
-        ).await {
-            Ok(m) => m,
-            Err(e) => {
-                println!("An error occurred while fetching the serum market account for {}. Ignoring market. Error: {}", market.name, e);
-                continue;
-            }
-        };
+        for market in &group_config.markets {
+            let dex_market_bids = Pubkey::from_str(market.bids.as_str()).unwrap();
+            let dex_market_asks = Pubkey::from_str(market.asks.as_str()).unwrap();
+            let dex_market_pk = Pubkey::from_str(&market.address).unwrap();
+            let dex_market_account = match get_serum_market(
+                Arc::clone(&self.rpc_client),
+                dex_market_pk
+            ).await {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("An error occurred while fetching the serum market account for {}. Ignoring market. Error: {}", market.name, e);
+                    continue;
+                }
+            };
 
-        let open_orders_pk = derive_open_orders_address(
-            &dex_market_pk,
-            &self.cypher_user_pk
-        );
+            let open_orders_pk = derive_open_orders_address(
+                &dex_market_pk,
+                &self.cypher_user_pk
+            );
 
-        let open_orders_account = match get_or_init_open_orders(
-            &self.keypair,
-            &self.cypher_group_pk,
-            &self.cypher_user_pk,
-            &dex_market_pk,
-            &open_orders_pk,
-            Arc::clone(&self.rpc_client)
-        ).await {
-            Ok(ooa) => ooa,
-            Err(e) => {
-                println!("An error occurred while fetching or creating open orders account for {}. Ignoring market. Error: {:?}", market.name, e);
-                continue;
-            },
-        };
+            let open_orders_account = match get_or_init_open_orders(
+                &self.keypair,
+                &self.cypher_group_pk,
+                &self.cypher_user_pk,
+                &dex_market_pk,
+                &open_orders_pk,
+                Arc::clone(&self.rpc_client)
+            ).await {
+                Ok(ooa) => ooa,
+                Err(e) => {
+                    println!("An error occurred while fetching or creating open orders account for {}. Ignoring market. Error: {:?}", market.name, e);
+                    continue;
+                },
+            };
+            ob_ctxs.push(OrderBookContext{
+                market: dex_market_pk,
+                bids: dex_market_bids,
+                asks: dex_market_asks,
+                coin_lot_size: dex_market_account.coin_lot_size,
+                pc_lot_size: dex_market_account.pc_lot_size
+            });
+        }
+
         let (ob_s, ob_r) = channel::<Arc<OrderBook>>(u16::MAX as usize);
         let arc_ob_s = Arc::new(ob_s);
         let ob_provider = Arc::new(OrderBookProvider::new(
@@ -193,12 +208,12 @@ impl Interactive {
             Arc::clone(&arc_ob_s),
             self.accounts_cache_sender.subscribe(),
             self.shutdown.subscribe(),
-            dex_market_pk,
-            dex_market_bids,
-            dex_market_asks,
-            dex_market_account.coin_lot_size,
-            dex_market_account.pc_lot_size
+            ob_ctxs
         ));
+        let ob_wrapper = OrderBookProviderWrapper {
+            provider: ob_provider,
+            sender: arc_ob_s
+        };
 
         let (oo_s, oo_r) = channel::<OpenOrders>(u16::MAX as usize);
         let arc_oo_s = Arc::new(oo_s);
@@ -211,8 +226,8 @@ impl Interactive {
         ));
         let oop_wrapper = OpenOrdersProviderWrapper {
             provider: oo_provider,
-            sender: 
-        }
+            sender: arc_oo_s,
+        };
 
         ais_pks.extend(vec![
             dex_market_pk,
@@ -245,67 +260,4 @@ impl Interactive {
         Ok(())
     }
 
-}
-struct OrderBookProviderWrapper {
-    provider: Arc<OrderBookProvider>,
-    sender: Arc<Sender<Arc<OrderBook>>>,
-    receiver: Receiver<Arc<OrderBook>>,
-}
-
-impl OrderBookProviderWrapper {
-    pub fn default() -> Self {
-        Self {
-            provider: Arc::new(OrderBookProvider::default()),
-            sender: Arc::new(channel::<Arc<OrderBook>>(u16::MAX as usize).0),
-            receiver: channel::<Arc<OrderBook>>(u16::MAX as usize).1,
-        }
-    }
-}
-
-struct OpenOrdersProviderWrapper {
-    provider: Arc<OpenOrdersProvider>,
-    sender: Arc<Sender<OpenOrders>>,
-    receiver: Receiver<OpenOrders>,
-}
-
-impl OpenOrdersProviderWrapper {
-    pub fn default() -> Self {
-        Self {
-            provider: Arc::new(OpenOrdersProvider::default()),
-            sender: Arc::new(channel::<OpenOrders>(u16::MAX as usize).0),
-            receiver: channel::<OpenOrders>(u16::MAX as usize).1,
-        }
-    }
-}
-
-struct CypherAccountProviderWrapper {
-    provider: Arc<CypherAccountProvider>,
-    sender: Arc<Sender<Box<CypherUser>>>,
-    receiver: Receiver<Box<CypherUser>>,
-}
-
-impl CypherAccountProviderWrapper {
-    pub fn default() -> Self {
-        Self {
-            provider: Arc::new(CypherAccountProvider::default()),
-            sender: Arc::new(channel::<Box<CypherUser>>(u16::MAX as usize).0),
-            receiver: channel::<Box<CypherUser>>(u16::MAX as usize).1,
-        }
-    }
-}
-
-struct CypherGroupProviderWrapper {
-    provider: Arc<CypherGroupProvider>,
-    sender: Arc<Sender<Box<CypherGroup>>>,
-    receiver: Receiver<Box<CypherGroup>>,
-}
-
-impl CypherGroupProviderWrapper {
-    pub fn default() -> Self {
-        Self {
-            provider: Arc::new(CypherGroupProvider::default()),
-            sender: Arc::new(channel::<Box<CypherGroup>>(u16::MAX as usize).0),
-            receiver: channel::<Box<CypherGroup>>(u16::MAX as usize).1,
-        }
-    }
 }
