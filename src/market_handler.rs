@@ -5,7 +5,7 @@ use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClien
 use solana_sdk::{hash::Hash, pubkey::Pubkey, signature::{Keypair, Signature}, transaction::Transaction, instruction::Instruction};
 use tokio::{sync::{broadcast::Receiver, Mutex, RwLock}, select};
 
-use crate::{CypherInteractiveError, providers::OrderBook, utils::{get_new_order_ix, get_cancel_order_ix, get_open_orders_with_qty, get_open_orders}, fast_tx_builder::FastTxnBuilder};
+use crate::{CypherInteractiveError, providers::{OrderBook, OpenOrdersContext}, utils::{get_new_order_ix, get_cancel_order_ix, get_open_orders_with_qty, get_open_orders}, fast_tx_builder::FastTxnBuilder};
 
 pub struct HandlerContext {
     pub user: Box<CypherUser>,
@@ -47,7 +47,7 @@ pub struct Handler {
     pub market_context: Box<MarketContext>,
     rpc_client: Arc<RpcClient>,
     shutdown_receiver: Mutex<Receiver<bool>>,
-    open_orders_provider: Mutex<Receiver<OpenOrders>>,
+    open_orders_provider: Mutex<Receiver<OpenOrdersContext>>,
     orderbook_provider: Mutex<Receiver<Arc<OrderBook>>>,
     dex_market: Option<MarketStateV2>,
     open_orders: RwLock<Option<OpenOrders>>,
@@ -59,7 +59,7 @@ impl Handler {
         market_context: Box<MarketContext>,
         rpc_client: Arc<RpcClient>,
         shutdown_receiver: Receiver<bool>,
-        open_orders_provider: Receiver<OpenOrders>,
+        open_orders_provider: Receiver<OpenOrdersContext>,
         orderbook_provider: Receiver<Arc<OrderBook>>,
         dex_market: Option<MarketStateV2>
     ) -> Self {
@@ -87,12 +87,18 @@ impl Handler {
             select! {
                 oo = oo_receiver.recv() => {    
                     if oo.is_ok() {
-                        *self.open_orders.write().await = Some(oo.unwrap());
+                        let ooc = oo.unwrap();
+                        if ooc.pubkey == self.market_context.open_orders_pk {
+                            *self.open_orders.write().await = Some(ooc.open_orders);
+                        }
                     }                
                 },
                 ob = ob_receiver.recv() => {
                     if ob.is_ok() {
-                        *self.orderbook.write().await = ob.unwrap();
+                        let obc = ob.unwrap();
+                        if obc.market == self.market_context.dex_market_pk {
+                            *self.orderbook.write().await = obc;
+                        }
                     }
                 },
                 _ = shutdown.recv() => {

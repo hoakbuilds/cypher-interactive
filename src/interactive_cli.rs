@@ -15,7 +15,7 @@ use crate::{
     cypher_context::CypherContext,
     config::CypherConfig,
     providers::{
-        OrderBookProvider, OpenOrdersProvider, CypherAccountProvider, CypherGroupProvider, OrderBookContext, OrderBook
+        OrderBookProvider, OpenOrdersProvider, CypherAccountProvider, CypherGroupProvider, OrderBookContext, OrderBook, OpenOrdersContext
     },
     accounts_cache::AccountsCache,
     services::{
@@ -223,7 +223,7 @@ impl InteractiveCli {
         let (ob_s, _) = channel::<Arc<OrderBook>>(u16::MAX as usize);
         let arc_ob_s = Arc::new(ob_s);
         
-        let (oo_s, _) = channel::<OpenOrders>(u16::MAX as usize);
+        let (oo_s, _) = channel::<OpenOrdersContext>(u16::MAX as usize);
         let arc_oo_s = Arc::new(oo_s);
 
         for market in &group_config.markets {
@@ -454,7 +454,10 @@ impl InteractiveCli {
     pub fn get_handler(&self, market: String) -> Result<&Arc<Handler>, CypherInteractiveError> {
         let maybe_handler = self.handlers.iter().find(|h| h.market_context.name == market);
         let handler = match maybe_handler {
-            Some(h) => h,
+            Some(h) => {
+                println!("Found handler for the market {}.", h.market_context.name);
+                h
+            },
             None => {
                 println!("Could not find a suitable handler for the market: {}.", market);
                 return Err(CypherInteractiveError::CouldNotFindHandler);
@@ -535,8 +538,17 @@ impl InteractiveCli {
                 return;
             }
         };
-        println!("----- Account Status -----");
 
+        let quote_divisor: Number = 10_u64.checked_pow(6).unwrap().into();
+        let (c_ratio, assets_value, liabs_value) = user.get_margin_c_ratio_components(&group).unwrap();
+        let assets_value_ui = assets_value / quote_divisor;
+        let liabs_value_ui = liabs_value / quote_divisor;
+        println!("----- Account Status -----");
+        println!("\tAssets Value (native): {}", assets_value);
+        println!("\tLiabilities Value (native): {}", liabs_value);
+        println!("\tAssets Value (ui): {}", assets_value_ui);
+        println!("\tLiabilities Value (ui): {}", liabs_value_ui);
+        println!("\tC Ratio: {}", c_ratio);
         for market in &group_config.markets {
             let cypher_token = group.get_cypher_token(market.market_index);
             let maybe_position = user.get_position(market.market_index);
@@ -546,9 +558,9 @@ impl InteractiveCli {
                     continue;
                 }
             };
+            let divisor: Number = 10_u64.checked_pow(cypher_token.decimals() as u32).unwrap().into();
             let native_borrows = position.native_borrows(cypher_token);
             let native_deposits = position.native_deposits(cypher_token);
-            let divisor: Number = 10_u64.checked_pow(cypher_token.decimals() as u32).unwrap().into();
             let borrows: Number = native_borrows / divisor;
             let deposits: Number = native_deposits / divisor;
             
@@ -564,10 +576,17 @@ impl InteractiveCli {
         }
         
         let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX);
-        let usdc_native_borrows = usdc_token.native_borrows();
-        let usdc_native_deposits = usdc_token.native_deposits();
-        let usdc_borrows = usdc_native_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
-        let usdc_deposits = usdc_native_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
+        let maybe_usdc_position = user.get_position(QUOTE_TOKEN_IDX);
+        let usdc_position = match maybe_usdc_position {
+            Ok(p) => p,
+            Err(_) => {
+                return;
+            }
+        };
+        let usdc_native_borrows = usdc_position.native_borrows(usdc_token);
+        let usdc_native_deposits = usdc_position.native_deposits(usdc_token);
+        let usdc_borrows = usdc_native_borrows / quote_divisor;
+        let usdc_deposits = usdc_native_deposits / quote_divisor;
         println!("\tToken: USDC");
         println!("\t\tDeposits (native): {}", usdc_native_deposits);
         println!("\t\tBorrows (native): {}", usdc_native_borrows);
@@ -667,6 +686,7 @@ impl InteractiveCli {
         let handler = match maybe_handler {
             Ok(h) => h,
             Err(_) => {
+                println!("Something went wrong while fetching the handler for market {}", info.symbol);
                 return;
             },
         };
@@ -690,19 +710,36 @@ impl InteractiveCli {
 
         bids.sort_by(|a, b| b.price.cmp(&a.price));
         asks.sort_by(|a, b| a.price.cmp(&b.price));
+        let num_bids = bids.len();
+        let num_asks = asks.len();
 
         println!("----- OrderBook Status -----");
-        println!("{:^10} {:^10} | {:^10} {:^10}", "Bid Size", "Bid Price", "Ask Price", "Ask Size");
-        for (idx, bid) in bids.iter().enumerate() {
-            let ask = asks.get(idx);
+        println!("Bids: {:^5} Asks: {:^5}", num_bids, num_asks);
 
-            if ask.is_none() {
-                println!("{:^10} {:^10}", bid.quantity, bid.price);
-            } else {
-                let ask = ask.unwrap();
-                println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, ask.price, ask.quantity);
+        println!("{:^10} {:^10} | {:^10} {:^10}", "Bid Size", "Bid Price", "Ask Price", "Ask Size");
+        if num_bids >= num_asks {
+            for (idx, bid) in bids.iter().enumerate() {
+                let ask = asks.get(idx);
+    
+                if ask.is_none() {
+                    println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, 0, 0);
+                } else {
+                    let ask = ask.unwrap();
+                    println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, ask.price, ask.quantity);
+                }
             }
-        }
+        } else {
+            for (idx, ask) in asks.iter().enumerate() {
+                let bid = bids.get(idx);
+    
+                if bid.is_none() {
+                    println!("{:^10} {:^10} | {:^10} {:^10}", 0, 0, ask.price, ask.quantity);
+                } else {
+                    let bid = bid.unwrap();
+                    println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, ask.price, ask.quantity);
+                }
+            }
+        }        
         println!("----- OrderBook Status -----");
     }
 

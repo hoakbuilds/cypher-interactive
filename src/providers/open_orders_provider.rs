@@ -9,9 +9,15 @@ use tokio::sync::{
 
 use crate::{accounts_cache::AccountsCache, CypherInteractiveError};
 
+#[derive(Clone)]
+pub struct OpenOrdersContext {
+    pub open_orders: OpenOrders,
+    pub pubkey: Pubkey,
+}
+
 pub struct OpenOrdersProvider {
     cache: Arc<AccountsCache>,
-    sender: Arc<Sender<OpenOrders>>,
+    sender: Arc<Sender<OpenOrdersContext>>,
     receiver: Mutex<Receiver<Pubkey>>,
     shutdown_receiver: Mutex<Receiver<bool>>,
     open_orders_pks: Vec<Pubkey>,
@@ -21,7 +27,7 @@ impl OpenOrdersProvider {
     pub fn default() -> Self {
         Self {
             cache: Arc::new(AccountsCache::default()),
-            sender: Arc::new(channel::<OpenOrders>(u16::MAX as usize).0),
+            sender: Arc::new(channel::<OpenOrdersContext>(u16::MAX as usize).0),
             receiver: Mutex::new(channel::<Pubkey>(u16::MAX as usize).1),
             shutdown_receiver: Mutex::new(channel::<bool>(1).1),
             open_orders_pks: Vec::new(),
@@ -30,7 +36,7 @@ impl OpenOrdersProvider {
 
     pub fn new(
         cache: Arc<AccountsCache>,
-        sender: Arc<Sender<OpenOrders>>,
+        sender: Arc<Sender<OpenOrdersContext>>,
         receiver: Receiver<Pubkey>,
         shutdown_receiver: Receiver<bool>,
         open_orders_pks: Vec<Pubkey>,
@@ -77,7 +83,10 @@ impl OpenOrdersProvider {
     
                 let dex_open_orders: OpenOrders = parse_dex_account(ai.account.data.to_vec());
     
-                match self.sender.send(dex_open_orders) {
+                match self.sender.send(OpenOrdersContext {
+                    open_orders: dex_open_orders,
+                    pubkey: key,
+                }) {
                     Ok(_) => {
                         return Ok(());
                     }
