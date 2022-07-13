@@ -43,22 +43,18 @@ impl ChainMetaService {
         let hash = match hash_res {
             Ok(hash) => hash,
             Err(e) => {
-                println!("[CMS] Failed to fetch recent block hash: {}", e.to_string());
                 return Err(e);
             }
         };
-        println!("[CMS] Fetched recent block hash: {}", hash.0.to_string());
         *self.recent_blockhash.write().await = hash.0;
 
         let slot_res = self.client.get_slot().await;
         let slot = match slot_res {
             Ok(slot) => slot,
             Err(e) => {
-                println!("[CMS] Failed to fetch recent slot: {}", e.to_string());
                 return Err(e);
             }
         };
-        println!("[CMS] Fetched recent slot: {}", slot);
         *self.slot.write().await = slot;
 
         Ok(())
@@ -67,14 +63,7 @@ impl ChainMetaService {
     #[inline(always)]
     async fn update_chain_meta_replay(self: Arc<Self>) {
         loop {
-            let res = self.update_chain_meta().await;
-
-            if res.is_err() {
-                println!(
-                    "[CMS] Couldn't get new chain meta! Error: {}",
-                    res.err().unwrap().to_string()
-                );
-            }
+            _ = self.update_chain_meta().await;
 
             sleep(Duration::from_millis(2500)).await;
         }
@@ -88,9 +77,7 @@ impl ChainMetaService {
         let mut shutdown = aself.shutdown_receiver.lock().await;
         tokio::select! {
             _ = cself.update_chain_meta_replay() => {},
-            _ = shutdown.recv() => {
-                println!("[CMS] Received shutdown signal, stopping.");
-            }
+            _ = shutdown.recv() => {}
         }
     }
 

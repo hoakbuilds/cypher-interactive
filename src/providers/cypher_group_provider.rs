@@ -52,18 +52,9 @@ impl CypherGroupProvider {
             tokio::select! {
                 key = receiver.recv() => {
                     if key.is_err() {
-                        println!("[CGP] There was an error while processing a provider update, restarting loop.");
                         continue;
                     } else {
-                        let res = self.process_updates(key.unwrap()).await;
-                        match res {
-                            Ok(_) => (),
-                            Err(_) => {
-                                println!(
-                                    "[CGP] There was an error sending an update about the cypher group.",
-                                );
-                            },
-                        }
+                        _ = self.process_updates(key.unwrap()).await;
                     }
                 },
                 _ = shutdown.recv() => {
@@ -72,7 +63,6 @@ impl CypherGroupProvider {
             }
 
             if shutdown_signal {
-                println!("[CGP] Received shutdown signal, stopping.",);
                 break;
             }
         }
@@ -89,19 +79,11 @@ impl CypherGroupProvider {
                     return Ok(());
                 }
                 Err(_) => {
-                    println!(
-                        "[CGP] Failed to send message about cypher account with key {}",
-                        self.pubkey
-                    );
                     return Err(CypherInteractiveError::ChannelSend);
                 }
             }
         }
 
         Ok(())
-    }
-    
-    pub fn subscribe(&self) -> Receiver<Box<CypherGroup>> {
-        self.sender.subscribe()
     }
 }

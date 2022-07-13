@@ -32,7 +32,7 @@ pub struct OrderBook {
 impl OrderBook {
     pub fn new(market: Pubkey) -> Self {
         Self {
-            market: Pubkey::default(),
+            market,
             bids: RwLock::new(Vec::new()),
             asks: RwLock::new(Vec::new()),
         }
@@ -45,7 +45,7 @@ pub struct OrderBookProvider {
     receiver: Mutex<Receiver<Pubkey>>,
     shutdown_receiver: Mutex<Receiver<bool>>,
     books_keys: Vec<OrderBookContext>,
-    books: Vec<Arc<OrderBook>>,
+    books: RwLock<Vec<Arc<OrderBook>>>,
 }
 
 impl OrderBookProvider {
@@ -56,7 +56,7 @@ impl OrderBookProvider {
             receiver: Mutex::new(channel::<Pubkey>(u16::MAX as usize).1),
             shutdown_receiver: Mutex::new(channel::<bool>(1).1),
             books_keys: Vec::new(),
-            books: Vec::new(),
+            books: RwLock::new(Vec::new()),
         }
     }
 
@@ -73,7 +73,7 @@ impl OrderBookProvider {
             sender,
             receiver: Mutex::new(receiver),
             shutdown_receiver: Mutex::new(shutdown_receiver),
-            books: Vec::new(),
+            books: RwLock::new(Vec::new()),
             books_keys: books,
         }
     }
@@ -87,16 +87,9 @@ impl OrderBookProvider {
             tokio::select! {
                 key = receiver.recv() => {
                     if key.is_err() {
-                        println!("[OBP] There was an error while processing a provider update, restarting loop.");
                         continue;
                     } else {
-                        let res = self.process_updates(key.unwrap()).await;
-                        match res {
-                            Ok(_) => (),
-                            Err(_) => {
-                                println!("[OBP] There was an error sending an update about the orderbook.");
-                            },
-                        }
+                        _ = self.process_updates(key.unwrap()).await;
                     }
                 },
                 _ = shutdown.recv() => {
@@ -105,7 +98,6 @@ impl OrderBookProvider {
             }
 
             if shutdown_signal {
-                println!("[OBP] Received shutdown signal, stopping.",);
                 break;
             }
         }
@@ -114,57 +106,69 @@ impl OrderBookProvider {
     #[allow(clippy::ptr_offset_with_cast)]
     async fn process_updates(self: &Arc<Self>, key: Pubkey) -> Result<(), CypherInteractiveError> {
         let mut updated: bool = false;
+        
+        let maybe_ob_ctx = self.books_keys.iter().find(|ctx| ctx.bids == key || ctx.asks == key);
+        if maybe_ob_ctx.is_none() {
+            return Ok(());
+        }
+        let ob_ctx = maybe_ob_ctx.unwrap();
 
-        for ob_keys in &self.books_keys {
-            let ob = match self.books.iter().find(|ob| ob.market == ob_keys.market) {
-                Some(ob) => ob,
-                None => {
-                    continue;
-                }
-            };
+        let rb = self.books.read().await;
+        let maybe_ob = rb.iter().find(|ob| ob.market == ob_ctx.market);
 
-            if key == ob_keys.bids {
-                let bid_ai = self.cache.get(&key).unwrap();
-
-                let (_bid_head, bid_data, _bid_tail) = array_refs![&bid_ai.account.data, 5; ..; 7];
-                let bid_data = &mut bid_data[8..].to_vec().clone();
-                let bids = Slab::new(bid_data);
-
-                let obl = bids.get_depth(25, ob_keys.pc_lot_size, ob_keys.coin_lot_size, false);
-
-                *ob.bids.write().await = obl;
-                updated = true;
-            } else if key == ob_keys.asks {
-                let ask_ai = self.cache.get(&key).unwrap();
-
-                let (_ask_head, ask_data, _ask_tail) = array_refs![&ask_ai.account.data, 5; ..; 7];
-                let ask_data = &mut ask_data[8..].to_vec().clone();
-                let asks = Slab::new(ask_data);
-
-                let obl = asks.get_depth(25, ob_keys.pc_lot_size, ob_keys.coin_lot_size, true);
-
-                *ob.asks.write().await = obl;
-                updated = true;
-            }
-
-            if updated {
-                let res = self.sender.send(Arc::clone(&ob));
-
-                match res {
-                    Ok(_) => {
-                        println!("[OBP] Updated orderbook for market: {}.", ob_keys.market);
-                    }
-                    Err(_) => {
-                        return Err(CypherInteractiveError::ChannelSend);
-                    }
-                };
-            }
+        if maybe_ob.is_none() {
+            drop(rb);
+            let ob = Arc::new(
+                OrderBook::new(ob_ctx.market)
+            );
+            let mut wb = self.books.write().await;
+            wb.push(ob);
+            drop(wb);
         }
 
+        let rb = self.books.read().await;
+        let ob = match rb.iter().find(|ob| ob.market == ob_ctx.market) {
+            Some(ob) => ob,
+            None => {
+                return Ok(());
+            }
+        };
+
+        if key == ob_ctx.bids {
+            let bid_ai = self.cache.get(&key).unwrap();
+
+            let (_bid_head, bid_data, _bid_tail) = array_refs![&bid_ai.account.data, 5; ..; 7];
+            let bid_data = &mut bid_data[8..].to_vec().clone();
+            let bids = Slab::new(bid_data);
+
+            let obl = bids.get_depth(25, ob_ctx.pc_lot_size, ob_ctx.coin_lot_size, false);
+
+            *ob.bids.write().await = obl;
+            updated = true;
+        } else if key == ob_ctx.asks {
+            let ask_ai = self.cache.get(&key).unwrap();
+
+            let (_ask_head, ask_data, _ask_tail) = array_refs![&ask_ai.account.data, 5; ..; 7];
+            let ask_data = &mut ask_data[8..].to_vec().clone();
+            let asks = Slab::new(ask_data);
+
+            let obl = asks.get_depth(25, ob_ctx.pc_lot_size, ob_ctx.coin_lot_size, true);
+
+            *ob.asks.write().await = obl;
+            updated = true;
+        }
+
+        if updated {
+            let res = self.sender.send(Arc::clone(ob));
+
+            match res {
+                Ok(_) => {}
+                Err(_) => {
+                    return Err(CypherInteractiveError::ChannelSend);
+                }
+            };
+        }
+        drop(rb);
         Ok(())
-    }
-    
-    pub fn subscribe(&self) -> Receiver<Arc<OrderBook>> {
-        self.sender.subscribe()
     }
 }

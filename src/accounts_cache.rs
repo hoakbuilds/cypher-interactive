@@ -43,10 +43,6 @@ impl AccountsCache {
                 Ok(())
             }
             Err(_) => {
-                println!(
-                    "Failed to send message about updated account {}",
-                    key.to_string()
-                );
                 Err(AccountsCacheError::ChannelSendError)
             }
         }

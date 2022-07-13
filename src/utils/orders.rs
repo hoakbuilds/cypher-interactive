@@ -7,8 +7,8 @@ use cypher::{
 use cypher_tester::{dex, ToPubkey};
 use serum_dex::{
     instruction::{CancelOrderInstructionV2, MarketInstruction, NewOrderInstructionV3},
-    matching::OrderType,
-    state::MarketStateV2,
+    matching::Side,
+    state::{MarketStateV2, OpenOrders},
 };
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
@@ -21,34 +21,79 @@ use solana_sdk::{
 };
 use std::convert::identity;
 
-bitflags::bitflags! {
-    pub struct ClientOrderFlags: u32 {
-        const MINTING = 1 << 0;
-        const POST_ONLY = 1 << 1;
-        const POST_ALLOWED = 1 << 2;
-    }
+use crate::{providers::OrderBook, serum_slab::OrderBookOrder};
+
+pub struct ManagedOrder {
+    pub order_id: u128,
+    pub client_order_id: u64,
+    pub price: u64,
+    pub quantity: u64,
+    pub side: Side,
 }
 
-pub fn gen_client_order_id(
-    orig_client_order_id: u32,
-    is_minting_order: bool,
-    order_type: OrderType,
-) -> u64 {
-    let mut client_order_flags = ClientOrderFlags::empty();
-    if is_minting_order {
-        client_order_flags |= ClientOrderFlags::MINTING;
-    }
-    match order_type {
-        OrderType::Limit => client_order_flags |= ClientOrderFlags::POST_ALLOWED,
-        OrderType::PostOnly => {
-            client_order_flags |= ClientOrderFlags::POST_ALLOWED;
-            client_order_flags |= ClientOrderFlags::POST_ONLY;
+pub async fn get_open_orders_with_qty(
+    open_orders: &OpenOrders,
+    orderbook: &OrderBook,
+) -> Vec<ManagedOrder> {
+    let mut oo: Vec<ManagedOrder> = Vec::new();
+    let orders = open_orders.orders;
+
+    for i in 0..orders.len() {
+        let order_id = open_orders.orders[i];
+        let client_order_id = open_orders.client_order_ids[i];
+
+        if order_id != u128::default() {
+            let price = (order_id >> 64) as u64;
+            let side = open_orders.slot_side(i as u8).unwrap();
+            let ob_order = get_order_book_line(orderbook, client_order_id, side).await;
+
+            if ob_order.is_some() {
+                oo.push(ManagedOrder {
+                    order_id,
+                    client_order_id,
+                    side,
+                    price,
+                    quantity: ob_order.unwrap().quantity,
+                });
+            }
         }
-        OrderType::ImmediateOrCancel => {}
     }
-    let upper = (orig_client_order_id as u64) << 32;
-    let lower = client_order_flags.bits() as u64;
-    upper | lower
+
+    oo
+}
+
+async fn get_order_book_line(
+    orderbook: &OrderBook,
+    client_order_id: u64,
+    side: Side,
+) -> Option<OrderBookOrder> {
+    if side == Side::Ask {
+        for order in orderbook.asks.read().await.iter() {
+            if order.client_order_id == client_order_id {
+                return Some(OrderBookOrder {
+                    order_id: order.order_id,
+                    price: order.price,
+                    quantity: order.quantity,
+                    client_order_id: order.client_order_id,
+                });
+            }
+        }
+    }
+
+    if side == Side::Bid {
+        for order in orderbook.bids.read().await.iter() {
+            if order.client_order_id == client_order_id {
+                return Some(OrderBookOrder {
+                    order_id: order.order_id,
+                    price: order.price,
+                    quantity: order.quantity,
+                    client_order_id: order.client_order_id,
+                });
+            }
+        }
+    }
+
+    None
 }
 
 pub fn gen_dex_vault_signer_key(

@@ -52,18 +52,9 @@ impl CypherAccountProvider {
             tokio::select! {
                 key = receiver.recv() => {
                     if key.is_err() {
-                        println!("[CAP] There was an error while processing a provider update, restarting loop.");
                         continue;
                     } else {
-                        let res = self.process_updates(key.unwrap()).await;
-                        match res {
-                            Ok(_) => (),
-                            Err(_) => {
-                                println!(
-                                    "[CAP] There was an error sending an update about the cypher account.",
-                                );
-                            },
-                        }
+                        _ = self.process_updates(key.unwrap()).await;
                     }
                 },
                 _ = shutdown.recv() => {
@@ -72,7 +63,6 @@ impl CypherAccountProvider {
             }
 
             if shutdown_signal {
-                println!("[CAP] Received shutdown signal, stopping.");
                 break;
             }
         }
@@ -95,9 +85,5 @@ impl CypherAccountProvider {
         }
 
         Ok(())
-    }
-    
-    pub fn subscribe(&self) -> Receiver<Box<CypherUser>> {
-        self.sender.subscribe()
     }
 }

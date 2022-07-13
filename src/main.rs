@@ -1,6 +1,7 @@
 mod config;
-mod interactive;
-mod handler;
+mod interactive_cli;
+mod cypher_context;
+mod market_handler;
 mod fast_tx_builder;
 mod serum_slab;
 mod utils;
@@ -9,15 +10,14 @@ mod providers;
 mod accounts_cache;
 
 use config::*;
-use interactive::*;
 
 use clap::Parser;
-use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::{nonblocking::rpc_client::RpcClient, client_error::ClientError};
 use tokio::sync::broadcast::channel;
 use std::{fs::File, str::FromStr, io::Read, sync::Arc};
 use solana_sdk::{signature::Keypair, signer::Signer, commitment_config::CommitmentConfig, pubkey::Pubkey};
 
-use crate::utils::derive_cypher_user_address;
+use crate::{utils::{derive_cypher_user_address, get_or_init_cypher_user}, interactive_cli::InteractiveCli};
 
 pub const CYPHER_CONFIG_PATH: &str = "./cfg/group.json";
 
@@ -38,9 +38,19 @@ pub enum CypherInteractiveError {
     Input,
     Airdrop,
     Deposit,
-    CreateOpenOrders,
-    CouldNotFetchOpenOrders,
-    ChannelSend
+    CouldNotFetchOpenOrders(ClientError),
+    CouldNotCreateOpenOrders(ClientError),
+    OpenOrdersNotFound,
+    CouldNotFetchCypherUser(ClientError),
+    CouldNotCreateCypherUser(ClientError),
+    CypherUserNotFound,
+    ChannelSend,
+    CouldNotFindHandler,
+    UserNotAvailable,
+    GroupNotAvailable,
+    OpenOrdersNotAvailable,
+    OrderBookNotAvailable,
+    TransactionSubmission(ClientError)
 }
 
 #[tokio::main]
@@ -67,26 +77,58 @@ async fn main() {
 
     let group_config = Arc::new(cypher_config.get_group(&cluster).unwrap());
     let cypher_group_pk = Pubkey::from_str(&group_config.address).unwrap();
-
     let cypher_user_pk = derive_cypher_user_address(&cypher_group_pk, &keypair.pubkey()).0;
 
-    let (shutdown_send, mut _shutdown_recv) = channel::<bool>(1);
+    let cypher_user_res = get_or_init_cypher_user(
+        &keypair,
+        &cypher_group_pk,
+        &cypher_user_pk,
+        Arc::clone(&rpc_client),
+        cluster.to_string()
+    ).await;
 
-    let interactive = Interactive::new(
+    match cypher_user_res {
+        Ok(_) => {
+            println!("Successfully fetched cypher user account with key: {}", cypher_user_pk);            
+        },
+        Err(e) => {
+            println!("There was an error getting or creating the cypher user account. {:?}", e);
+            return;
+        }
+    }
+
+    let (shutdown_send, mut _shutdown_recv) = channel::<bool>(1);
+    let arc_kp = Arc::new(keypair);
+
+    let interactive = InteractiveCli::new(
         Arc::clone(&cypher_config),
-        cluster,
+        cluster.clone(),
         Arc::clone(&rpc_client),
         shutdown_send.clone(),
-        keypair,
+        Arc::clone(&arc_kp),
         cypher_user_pk,
-        cypher_group_pk
+        cypher_group_pk,
     );
-
-    match interactive.init().await {
-        Ok(_) => (),
-        Err(e) => {
-            println!("There was an error while initializing the interactive command line: {:?}", e);
-        }
+    
+    tokio::select! {
+        cli_res = interactive.start() => {
+            match cli_res {
+                Ok(_) => (),
+                Err(e) => {
+                    println!("An error occurred while running the application loop: {:?}", e);
+                }
+            }
+        },
+        _ = tokio::signal::ctrl_c() => {
+            match shutdown_send.send(true) {
+                Ok(_) => {
+                    println!("Sucessfully sent shutdown signal. Waiting for tasks to complete...")
+                },
+                Err(e) => {
+                    println!("Failed to send shutdown error: {}", e);
+                }
+            };
+        },
     }
 }
 

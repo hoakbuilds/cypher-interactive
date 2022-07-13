@@ -73,13 +73,11 @@ impl AccountInfoService {
         let res = match rpc_result {
             Ok(r) => r,
             Err(e) => {
-                println!("[AIS] Could not fetch account infos: {}", e.to_string());
                 return Err(e);
             }
         };
 
         let mut infos = res.value;
-        println!("[AIS] Fetched {} account infos.", infos.len());
 
         while !infos.is_empty() {
             let next = infos.pop().unwrap();
@@ -89,29 +87,17 @@ impl AccountInfoService {
             let println = match next {
                 Some(ai) => ai,
                 None => {
-                    println!(
-                        "[AIS] [{}/{}] An account println was missing!!",
-                        i,
-                        infos.len()
-                    );
                     continue;
                 }
             };
 
-            let res = self.cache.insert(
+            _ = self.cache.insert(
                 key,
                 AccountState {
                     account: println,
                     slot: res.context.slot,
                 },
             );
-
-            match res {
-                Ok(_) => (),
-                Err(_) => {
-                    println!("[AIS] There was an error while inserting account println in the cache.");
-                }
-            };
         }
 
         Ok(())
@@ -123,14 +109,7 @@ impl AccountInfoService {
             let aself = self.clone();
 
             for i in (0..self.keys.len()).step_by(100) {
-                let res = aself.update_infos(i, self.keys.len().min(i + 100)).await;
-
-                if res.is_err() {
-                    println!(
-                        "[AIS] Failed to update account infos: {}",
-                        res.err().unwrap().to_string()
-                    );
-                }
+                _ = aself.update_infos(i, self.keys.len().min(i + 100)).await;
             }
 
             sleep(Duration::from_millis(500)).await;

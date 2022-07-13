@@ -53,16 +53,9 @@ impl OpenOrdersProvider {
             tokio::select! {
                 key = receiver.recv() => {
                     if key.is_err() {
-                        println!("[OOAP] There was an error while processing a provider update, restarting loop.");
                         continue;
                     } else {
-                        let res = self.process_updates(key.unwrap()).await;
-                        match res {
-                            Ok(_) => (),
-                            Err(_) => {
-                                println!("[OOAP] There was an error sending an update about the open orders account.");
-                            },
-                        }
+                        _ = self.process_updates(key.unwrap()).await;
                     }
                 },
                 _ = shutdown.recv() => {
@@ -71,7 +64,6 @@ impl OpenOrdersProvider {
             }
 
             if shutdown_signal {
-                println!("[OOAP] Received shutdown signal, stopping.",);
                 break;
             }
         }
@@ -87,14 +79,9 @@ impl OpenOrdersProvider {
     
                 match self.sender.send(dex_open_orders) {
                     Ok(_) => {
-                        //println!("[OOAP] Latest price for {}: {}", self.symbol, price);
                         return Ok(());
                     }
                     Err(_) => {
-                        println!(
-                            "[OOAP] Failed to send message about the open orders account with key: {}.",
-                            oo_pk
-                        );
                         return Err(CypherInteractiveError::ChannelSend);
                     }
                 }
@@ -102,9 +89,5 @@ impl OpenOrdersProvider {
         }
 
         Ok(())
-    }
-
-    pub fn subscribe(&self) -> Receiver<OpenOrders> {
-        self.sender.subscribe()
     }
 }
