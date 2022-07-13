@@ -235,7 +235,7 @@ pub async fn get_or_init_open_orders(
 
         match res {
             Ok(s) => {                
-                println!("Successfully created cypher user account: https://explorer.solana.com/tx/{}?cluster={}", s, cluster);
+                println!("Successfully created open orders account: https://explorer.solana.com/tx/{}?cluster={}", s, cluster);
             },
             Err(e) => {
                 return Err(e);
