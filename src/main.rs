@@ -50,6 +50,7 @@ pub enum CypherInteractiveError {
     GroupNotAvailable,
     OpenOrdersNotAvailable,
     OrderBookNotAvailable,
+    InvalidOrderId(u128),
     TransactionSubmission(ClientError)
 }
 

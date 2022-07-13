@@ -369,7 +369,6 @@ impl InteractiveCli {
                 }
             };
 
-            println!("loel");
             let maybe_command = match get_command(input) {
                 Ok(c) => c,
                 Err(e) => {
@@ -388,7 +387,6 @@ impl InteractiveCli {
             if command == InteractiveCommand::Exit {
                 break;
             }
-            println!("loeal");
 
             match self.process_command(command.clone()).await {
                 Ok(_) => (),
@@ -425,7 +423,6 @@ impl InteractiveCli {
         command: InteractiveCommand
     ) -> Result<(), CypherInteractiveError>  {
 
-        println!("loebl");
         match command {
             InteractiveCommand::Help => {
                 println!(">>> airdrop \n\t- airdrop quote token (devnet only)");
@@ -460,7 +457,6 @@ impl InteractiveCli {
             Some(h) => h,
             None => {
                 println!("Could not find a suitable handler for the market: {}.", market);
-                // TODO: List available markets.
                 return Err(CypherInteractiveError::CouldNotFindHandler);
             }
         };
@@ -561,6 +557,10 @@ impl InteractiveCli {
             println!("\t\tDeposits (native): {}", native_deposits);
             println!("\t\tBorrows (ui): {}", borrows);
             println!("\t\tDeposits (ui): {}", deposits);
+            println!("\t\tUnsettled coin (native): {}", position.oo_info.coin_free);
+            println!("\t\tUnsettled price coin (native): {}", position.oo_info.pc_free);
+            println!("\t\tLocked coin (native): {}", position.oo_info.coin_total - position.oo_info.coin_free);
+            println!("\t\tLocked price coin (native): {}", position.oo_info.pc_total - position.oo_info.pc_free);
         }
         
         let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX);
@@ -741,7 +741,9 @@ impl InteractiveCli {
             hash: Box::new(hash),
         };
         match handler.limit_order(ctx, &info).await {
-            Ok(_) => (),
+            Ok(s) => {
+                println!("Successfully placed order. https://explorer.solana.com/tx/{}?cluster=devnet", s);                
+            },
             Err(e) => {
                 println!("There was an error placing limit order. Err: {:?}", e);
             },
@@ -783,9 +785,11 @@ impl InteractiveCli {
             hash: Box::new(hash),
         };
         match handler.market_order(ctx, &info).await {
-            Ok(_) => (),
+            Ok(s) => {
+                println!("Successfully placed order. https://explorer.solana.com/tx/{}?cluster=devnet", s);                
+            },
             Err(e) => {
-                println!("There was an error placing market order. Err: {}", e);
+                println!("There was an error placing market order. Err: {:?}", e);
             },
         }
     }
@@ -825,7 +829,9 @@ impl InteractiveCli {
             hash: Box::new(hash),
         };
         match handler.cancel_order(ctx, info.order_id).await {
-            Ok(_) => (),
+            Ok(s) => {
+                println!("Successfully cancelled order. https://explorer.solana.com/tx/{}?cluster=devnet", s);                
+            },
             Err(e) => {
                 println!("There was an error placing market order. Err: {:?}", e);
             },
@@ -846,8 +852,6 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
     if buffer.is_empty() {
         return Ok(None);
     }
-
-    println!("lol");
 
     let splits: Vec<&str> = buffer.split(' ').collect();
 
@@ -922,8 +926,6 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
                 return Err(CypherInteractiveError::Input);
             }
         };
-
-        println!("limit {:?} {} {} {}", side, symbol, amount, price);
 
         return Ok(Some(InteractiveCommand::Limit(LimitOrderInfo{
             symbol,

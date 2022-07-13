@@ -31,6 +31,31 @@ pub struct ManagedOrder {
     pub side: Side,
 }
 
+pub fn get_open_orders(open_orders: &OpenOrders) -> Vec<ManagedOrder> {
+    let mut oo: Vec<ManagedOrder> = Vec::new();
+    let orders = open_orders.orders;
+
+    for i in 0..orders.len() {
+        let order_id = open_orders.orders[i];
+        let client_order_id = open_orders.client_order_ids[i];
+
+        if order_id != u128::default() {
+            let price = (order_id >> 64) as u64;
+            let side = open_orders.slot_side(i as u8).unwrap();
+
+            oo.push(ManagedOrder {
+                order_id,
+                client_order_id,
+                side,
+                price,
+                quantity: u64::default(),
+            });
+        }
+    }
+
+    oo
+}
+
 pub async fn get_open_orders_with_qty(
     open_orders: &OpenOrders,
     orderbook: &OrderBook,

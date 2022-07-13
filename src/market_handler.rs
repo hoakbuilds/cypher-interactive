@@ -1,11 +1,11 @@
 use std::{sync::Arc, num::NonZeroU64};
 use cypher::states::{CypherGroup, CypherUser};
-use serum_dex::{matching::{Side, OrderType}, state::{MarketStateV2, OpenOrders}, instruction::{NewOrderInstructionV3, SelfTradeBehavior}};
+use serum_dex::{matching::{Side, OrderType}, state::{MarketStateV2, OpenOrders}, instruction::{NewOrderInstructionV3, SelfTradeBehavior, CancelOrderInstructionV2}};
 use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClient};
-use solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Keypair};
+use solana_sdk::{hash::Hash, pubkey::Pubkey, signature::{Keypair, Signature}, transaction::Transaction, instruction::Instruction};
 use tokio::{sync::{broadcast::Receiver, Mutex, RwLock}, select};
 
-use crate::{CypherInteractiveError, providers::OrderBook, utils::get_new_order_ix};
+use crate::{CypherInteractiveError, providers::OrderBook, utils::{get_new_order_ix, get_cancel_order_ix, get_open_orders_with_qty, get_open_orders}, fast_tx_builder::FastTxnBuilder};
 
 pub struct HandlerContext {
     pub user: Box<CypherUser>,
@@ -134,22 +134,21 @@ impl Handler {
         self: &Arc<Self>,
         ctx: HandlerContext,
         order_info: &MarketOrderInfo
-    ) -> Result<(), ClientError> {
-        let market_ctx = &self.market_context;
+    ) -> Result<Signature, CypherInteractiveError> {
         let dex_market_state = self.dex_market.unwrap();
-        let cypher_market = ctx.group.get_cypher_market(market_ctx.market_index);
-        let cypher_token = ctx.group.get_cypher_token(market_ctx.market_index);
+        let cypher_market = Box::new(ctx.group.get_cypher_market(self.market_context.market_index));
+        let cypher_token = Box::new(ctx.group.get_cypher_token(self.market_context.market_index));
 
         //todo get best price
 
         let order = get_new_order_ix(
             &ctx.group,
-            cypher_market,
-            cypher_token,
+            &cypher_market,
+            &cypher_token,
             &dex_market_state,
-            &market_ctx.open_orders_pk,
-            &market_ctx.cypher_user_pk,
-            &market_ctx.signer,
+            &self.market_context.open_orders_pk,
+            &self.market_context.cypher_user_pk,
+            &self.market_context.signer,
             NewOrderInstructionV3 {
                 side: order_info.side,
                 limit_price: todo!(),
@@ -163,31 +162,33 @@ impl Handler {
             }
         );
 
-        Ok(())
+        let res = self.submit_transactions(order, &self.market_context.signer, *ctx.hash).await;
+
+        match res {
+            Ok(s) => Ok(s),
+            Err(e) => Err(CypherInteractiveError::TransactionSubmission(e)),
+        }
     }
 
     pub async fn limit_order(
         self: &Arc<Self>,
         ctx: HandlerContext,
         order_info: &LimitOrderInfo,
-    ) -> Result<(), ClientError> {
-        let market_ctx = &self.market_context;
+    ) -> Result<Signature, CypherInteractiveError> {
         let dex_market_state = self.dex_market.unwrap();
-        let cypher_market = ctx.group.get_cypher_market(market_ctx.market_index);
-        let cypher_token = ctx.group.get_cypher_token(market_ctx.market_index);
-
-        //todo get best price
+        let cypher_market = Box::new(ctx.group.get_cypher_market(self.market_context.market_index));
+        let cypher_token = Box::new(ctx.group.get_cypher_token(self.market_context.market_index));
 
         let max_native_pc_qty = order_info.amount * order_info.price;
 
-        let order = get_new_order_ix(
+        let order_ix = get_new_order_ix(
             &ctx.group,
-            cypher_market,
-            cypher_token,
+            &cypher_market,
+            &cypher_token,
             &dex_market_state,
-            &market_ctx.open_orders_pk,
-            &market_ctx.cypher_user_pk,
-            &market_ctx.signer,
+            &self.market_context.open_orders_pk,
+            &self.market_context.cypher_user_pk,
+            &self.market_context.signer,
             NewOrderInstructionV3 {
                 side: order_info.side,
                 limit_price: NonZeroU64::new(order_info.price).unwrap(),
@@ -201,15 +202,84 @@ impl Handler {
             }
         );
 
-        Ok(())
+        let res = self.submit_transactions(order_ix, &self.market_context.signer, *ctx.hash).await;
+
+        match res {
+            Ok(s) => Ok(s),
+            Err(e) => Err(CypherInteractiveError::TransactionSubmission(e)),
+        }
     }
 
     pub async fn cancel_order(
         self: &Arc<Self>,
         ctx: HandlerContext,
         order_id: u128,
-    ) -> Result<(), ClientError> {
+    ) -> Result<Signature, CypherInteractiveError> {
+        let dex_market_state = self.dex_market.unwrap();
+        let cypher_market = Box::new(ctx.group.get_cypher_market(self.market_context.market_index));
+        let cypher_token = Box::new(ctx.group.get_cypher_token(self.market_context.market_index));
 
-        Ok(())
+        let open_orders_account = Box::new(self.get_open_orders().await.unwrap());
+        let open_orders = Box::new(get_open_orders(&open_orders_account));
+        let maybe_order = open_orders.iter().find(|o| o.order_id == order_id);
+        let order = match maybe_order {
+            Some(o) => Box::new(o),
+            None => {
+                return Err(CypherInteractiveError::InvalidOrderId(order_id));
+            },
+        };
+        let cancel_order_ix = get_cancel_order_ix(
+            &ctx.group,
+            &cypher_market,
+            &cypher_token,
+            &dex_market_state,
+            &self.market_context.open_orders_pk,
+            &self.market_context.cypher_user_pk,
+            &self.market_context.signer,
+            CancelOrderInstructionV2{
+                order_id,
+                side: order.side,
+            }
+        );
+
+        let res = self.submit_transactions(cancel_order_ix, &self.market_context.signer, *ctx.hash).await;
+
+        match res {
+            Ok(s) => Ok(s),
+            Err(e) => Err(CypherInteractiveError::TransactionSubmission(e)),
+        }
+    }
+
+    async fn submit_transactions(
+        self: &Arc<Self>,
+        ix: Instruction,
+        signer: &Keypair,
+        blockhash: Hash,
+    ) -> Result<Signature, ClientError> {
+        let mut txn_builder: Box<FastTxnBuilder> = Box::new(FastTxnBuilder::new());
+        txn_builder.add(ix);
+
+        let tx = txn_builder.build(blockhash, signer, None);
+        let res = self.send_and_confirm_transaction(&tx).await;
+        match res {
+            Ok(s) => Ok(s),
+            Err(e) => Err(e)
+        }
+    }
+
+    async fn send_and_confirm_transaction(
+        self: &Arc<Self>,
+        tx: &Transaction,
+    ) -> Result<Signature, ClientError> {
+        let submit_res = self.rpc_client.send_and_confirm_transaction(tx).await;
+
+        match submit_res {
+            Ok(s) => {
+                Ok(s)
+            }
+            Err(e) => {
+                Err(e)
+            }
+        }
     }
 }
