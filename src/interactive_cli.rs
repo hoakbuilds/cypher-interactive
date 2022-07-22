@@ -662,12 +662,12 @@ impl InteractiveCli {
             let cypher_token = group.get_cypher_token(market.market_index);
             
             println!("\tToken: {}", market.base_symbol);
-            println!("\t\tBorrows (native): {}", cypher_token.native_borrows())
+            println!("\t\tBorrows (native): {}", cypher_token.base_borrows())
         }
 
         let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX);
-        let usdc_native_borrows = usdc_token.native_borrows();
-        let usdc_native_deposits = usdc_token.native_deposits();
+        let usdc_native_borrows = usdc_token.base_borrows();
+        let usdc_native_deposits = usdc_token.base_deposits();
         let usdc_borrows = usdc_native_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
         let usdc_deposits = usdc_native_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
         println!("\tToken: USDC");

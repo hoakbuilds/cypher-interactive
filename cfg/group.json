@@ -20,15 +20,9 @@
             "tokens": [
                 {
                     "symbol": "SOLETH",
-                    "mint": "75TDTqJhHgg7sFED4YXsb9AXr9uuCEHXeknearmAPrES",
+                    "mint": "4yveMhkZzY9uKH7rTYhs5da4JbRBkbb2KKFGbQr9PnWU",
                     "decimals": 0,
-                    "tokenIndex": 0
-                },
-                {
-                    "symbol": "BTCETH",
-                    "mint": "BUKh5At7yV6QQ7fnEJ2NVKs8dCMQWKktKewPPV6apDvw",
-                    "decimals": 0,
-                    "tokenIndex": 1
+                    "tokenIndex": 2
                 },
                 {
                     "symbol": "USDC",
@@ -59,28 +53,62 @@
                     "marketType": "Pair",
                     "pairBaseSymbol": "SOL",
                     "pairQuoteSymbol": "ETH",
-                    "address": "B1M5s5v5DeaXjipcD3MYhUsfqcDcSwcRnD28MmAKfxz3",
+                    "address": "5CPE4mGv4DwttceNTJn8jnvSwuJ8jdwfSVXDJ6sf3VR2",
+                    "baseDecimals": 0,
+                    "quoteDecimals": 6,
+                    "marketIndex": 2,
+                    "bids": "9UUpUFPhZftdQndETvYJL9irY49XF1HWdtBwsfJ19iWZ",
+                    "asks": "6Hc5vmdwa7B2y2A8aHzqzD7zhxFDN7f55Cj2dp8vdU4n",
+                    "eventQueue": "CxTLxuxbg8zmFbezdviTbXxMtnhNi2zrbvHzQRFwsQ3E"
+                }
+            ]
+        },
+        {
+            "cluster": "devnet",
+            "name": "devnet2",
+            "quoteSymbol": "USDC",
+            "address": "B9v8Nbd2X9UJmVF4ZSng1Nj6wQ9Q86LfEFUbWUw7E7XU",
+            "programId": "8Z8nDAa98hgdYCS9SyAyAesxE3ZhAq8Qo1E8v2V8VU56",
+            "serumProgramId": "",
+            "tokens": [
+                {
+                    "symbol": "SOLETH",
+                    "mint": "GpMKPYrFWrVYTKPmiMCP5bQe1QnEjp44hg3jgdfy9eV7",
+                    "decimals": 0,
+                    "tokenIndex": 0
+                },
+                {
+                    "symbol": "USDC",
+                    "mint": "DPhNUKVhnrkdbq37GUgTUBRbZLsvziX1p5e5YUXyjBsb",
+                    "decimals": 6,
+                    "tokenIndex": 15
+                }
+            ],
+            "oracles" : [
+                {
+                    "symbol": "SOL",
+                    "address": "3Mnn2fX6rQyUsyELYms1sBJyChWofzSNRoqYzvgMVz5E"
+                },
+                {
+                    "symbol": "ETH",
+                    "address": "2ciUuGZiee5macAMeQ7bHGTJtwcYTgnt6jdmQnnKZrfu"
+                }
+            ],
+            "markets": [
+                {
+                    "name": "SOL/ETH",
+                    "baseSymbol": "SOLETH",
+                    "quoteSymbol": "USDC",
+                    "marketType": "Pair",
+                    "pairBaseSymbol": "SOL",
+                    "pairQuoteSymbol": "ETH",
+                    "address": "Cgwx6FvJe5UVDKobaNLBUSn6ySQJEKJoWF3cRWPQsrwM",
                     "baseDecimals": 0,
                     "quoteDecimals": 6,
                     "marketIndex": 0,
-                    "bids": "6mXpFi67AKJJjmVaWWf1HneEQNgbZ8KqpkUqs9BuBhnn",
-                    "asks": "EcPtEZWPuQk3Rn87xDzZeXQcv7Nvow4HoQgwThVBM1ur",
-                    "eventQueue": "97hg9311PWd1wfvrE6uK4146qfvzFGLJ5mdJECkLfF13"
-                },
-                {
-                    "name": "BTC/ETH",
-                    "baseSymbol": "BTCETH",
-                    "quoteSymbol": "USDC",
-                    "marketType": "Pair",
-                    "pairBaseSymbol": "BTC",
-                    "pairQuoteSymbol": "ETH",
-                    "address": "6j9ML4VPX9DBxN8MA4C4MFFySvvnjSeuSC1WopWyX4jQ",
-                    "baseDecimals": 0,
-                    "quoteDecimals": 6,
-                    "marketIndex": 1,
-                    "bids": "61Yo2DDZ5WJSmMNBLHLF8tyB6YPt7xY9GZ9XRbBGk3wE",
-                    "asks": "HXuiUHnhhVRMAACEFhcgQqGHuvQXtDHFvqpVGAUnBw9T",
-                    "eventQueue": "6iv6kweL2QnyCE2KgJbyesFnx7dNGq4SMu4d5D3qboqt"
+                    "bids": "7SnbmCWyNx6GLqEXEsoXdogcRoZe8ikwensR5zWXaout",
+                    "asks": "HqExi2VuJaBgXH3MJdvuvRZX3c3N5yx3hHXnY1YgB44c",
+                    "eventQueue": "EEa4MLKmKJtorfRoGJ8AkxeazqHGho2mFm18fXbdKX2H"
                 }
             ]
         },
