@@ -27,7 +27,10 @@ struct Cli {
     keypair: std::path::PathBuf,
 
     #[clap(short = 'c', long = "cluster")]
-    cluster: String
+    cluster: String,
+
+    #[clap(short = 'g', long = "group")]
+    group: String
 }
 
 #[derive(Debug)]
@@ -69,14 +72,16 @@ async fn main() {
     let cypher_config = Arc::new(load_cypher_config(CYPHER_CONFIG_PATH).unwrap());
     
     let cluster = args.cluster;
+    let group_name = args.group;
     let cluster_config = cypher_config.get_config_for_cluster(&cluster);
     let rpc_client = Arc::new(RpcClient::new_with_commitment(
         cluster_config.rpc_url.to_string(),
         CommitmentConfig::confirmed(),
     ));
     println!("Connecting to cluster: {}", cluster);
+    println!("Using group: {}", group_name);
 
-    let group_config = Arc::new(cypher_config.get_group(&cluster).unwrap());
+    let group_config = Arc::new(cypher_config.get_group(&group_name).unwrap());
     let cypher_group_pk = Pubkey::from_str(&group_config.address).unwrap();
     let cypher_user_pk = derive_cypher_user_address(&cypher_group_pk, &keypair.pubkey()).0;
 
@@ -104,6 +109,7 @@ async fn main() {
     let interactive = InteractiveCli::new(
         Arc::clone(&cypher_config),
         cluster.clone(),
+        group_name.clone(),
         Arc::clone(&rpc_client),
         shutdown_send.clone(),
         Arc::clone(&arc_kp),

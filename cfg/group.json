@@ -12,59 +12,6 @@
     "groups": [
         {
             "cluster": "devnet",
-            "name": "devnet1",
-            "quoteSymbol": "USDC",
-            "address": "6s2P2RjZiUzJ4yZRKsiGVsUhWgJZQUaSDFGYC3ZhTRat",
-            "programId": "8XTphgpN4xo22LFYZK7AWxGktDSThqmp9cZNB5Pap9o4",
-            "serumProgramId": "",
-            "tokens": [
-                {
-                    "symbol": "SOLETH",
-                    "mint": "4yveMhkZzY9uKH7rTYhs5da4JbRBkbb2KKFGbQr9PnWU",
-                    "decimals": 0,
-                    "tokenIndex": 2
-                },
-                {
-                    "symbol": "USDC",
-                    "mint": "DPhNUKVhnrkdbq37GUgTUBRbZLsvziX1p5e5YUXyjBsb",
-                    "decimals": 6,
-                    "tokenIndex": 15
-                }
-            ],
-            "oracles" : [
-                {
-                    "symbol": "SOL",
-                    "address": "3Mnn2fX6rQyUsyELYms1sBJyChWofzSNRoqYzvgMVz5E"
-                },
-                {
-                    "symbol": "ETH",
-                    "address": "2ciUuGZiee5macAMeQ7bHGTJtwcYTgnt6jdmQnnKZrfu"
-                },
-                {
-                    "symbol": "BTC",
-                    "address": "3m1y5h2uv7EQL3KaJZehvAJa4yDNvgc5yAdL9KPMKwvk"
-                }
-            ],
-            "markets": [
-                {
-                    "name": "SOL/ETH",
-                    "baseSymbol": "SOLETH",
-                    "quoteSymbol": "USDC",
-                    "marketType": "Pair",
-                    "pairBaseSymbol": "SOL",
-                    "pairQuoteSymbol": "ETH",
-                    "address": "5CPE4mGv4DwttceNTJn8jnvSwuJ8jdwfSVXDJ6sf3VR2",
-                    "baseDecimals": 0,
-                    "quoteDecimals": 6,
-                    "marketIndex": 2,
-                    "bids": "9UUpUFPhZftdQndETvYJL9irY49XF1HWdtBwsfJ19iWZ",
-                    "asks": "6Hc5vmdwa7B2y2A8aHzqzD7zhxFDN7f55Cj2dp8vdU4n",
-                    "eventQueue": "CxTLxuxbg8zmFbezdviTbXxMtnhNi2zrbvHzQRFwsQ3E"
-                }
-            ]
-        },
-        {
-            "cluster": "devnet",
             "name": "devnet2",
             "quoteSymbol": "USDC",
             "address": "B9v8Nbd2X9UJmVF4ZSng1Nj6wQ9Q86LfEFUbWUw7E7XU",

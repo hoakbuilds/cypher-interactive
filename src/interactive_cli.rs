@@ -2,6 +2,7 @@ use std::{io::{self, Write}, sync::Arc, str::FromStr};
 
 use cypher::{states::{CypherGroup, CypherUser}, constants::QUOTE_TOKEN_IDX};
 use jet_proto_math::Number;
+use safe_transmute::util;
 use serum_dex::{matching::Side, state::OpenOrders};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
@@ -50,6 +51,7 @@ struct OrderBookInfo {
 pub struct InteractiveCli {
     cypher_config: Arc<CypherConfig>,
     cluster: String,
+    group: String,
     rpc_client: Arc<RpcClient>,
     shutdown: Sender<bool>,
     ai_service: Arc<AccountInfoService>,
@@ -74,6 +76,7 @@ impl InteractiveCli {
     pub fn new(
         cypher_config: Arc<CypherConfig>,
         cluster: String,
+        group: String,
         rpc_client: Arc<RpcClient>,
         shutdown: Sender<bool>,
         keypair: Arc<Keypair>,
@@ -83,6 +86,7 @@ impl InteractiveCli {
         Self {
             cypher_config,
             cluster,
+            group,
             rpc_client,
             shutdown,
             keypair,
@@ -185,7 +189,7 @@ impl InteractiveCli {
         let mut ob_ctxs: Vec<OrderBookContext> = Vec::new();
         let mut open_orders_pks: Vec<Pubkey> = Vec::new();
 
-        let group_config = self.cypher_config.get_group(&self.cluster).unwrap();
+        let group_config = self.cypher_config.get_group(&self.group).unwrap();
 
         // unbounded channel for the accounts cache to send messages whenever a given account gets updated
         let (accounts_cache_s, _) = channel::<Pubkey>(u16::MAX as usize);
@@ -521,7 +525,7 @@ impl InteractiveCli {
         &self
     ) {
         let cypher_config = &self.cypher_config;
-        let group_config = cypher_config.get_group(&self.cluster).unwrap();
+        let group_config = cypher_config.get_group(&self.group).unwrap();
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -618,7 +622,7 @@ impl InteractiveCli {
         &self
     ) {
         let cypher_config = &self.cypher_config;
-        let group_config = cypher_config.get_group(&self.cluster).unwrap();
+        let group_config = cypher_config.get_group(&self.group).unwrap();
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -647,7 +651,7 @@ impl InteractiveCli {
         &self
     ) {
         let cypher_config = &self.cypher_config;
-        let group_config = cypher_config.get_group(&self.cluster).unwrap();
+        let group_config = cypher_config.get_group(&self.group).unwrap();
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -670,7 +674,25 @@ impl InteractiveCli {
         let usdc_native_deposits = usdc_token.base_deposits();
         let usdc_borrows = usdc_native_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
         let usdc_deposits = usdc_native_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
+        let utilization = (usdc_native_borrows.as_u64(0) as f64 * 100.0) / usdc_native_deposits.as_u64(0) as f64;
+
+        let borrow_rate = if utilization > usdc_token.config.optimal_util as f64 {
+            let extra_util = utilization - usdc_token.config.optimal_util as f64;
+            let slope = (usdc_token.config.max_apr as f64 - usdc_token.config.optimal_apr as f64) / (100.0 - usdc_token.config.optimal_util as f64);
+            usdc_token.config.optimal_apr as f64 + slope * extra_util
+        } else {
+            let slope = usdc_token.config.optimal_apr as f64 / usdc_token.config.optimal_util as f64;
+            slope * utilization
+        };
+
+        let deposit_rate = (borrow_rate * utilization) / 100.0;
+
         println!("\tToken: USDC");
+        println!("\t\tOptimal Utilization: {}", usdc_token.config.optimal_util);
+        println!("\t\tOptimal Rate: {}", usdc_token.config.optimal_apr);
+        println!("\t\tMax Rate: {}", usdc_token.config.max_apr);
+        println!("\t\tDeposit Rate: {}", deposit_rate);
+        println!("\t\tBorrow Rate: {}", borrow_rate);
         println!("\t\tDeposits (native): {}", usdc_native_deposits);
         println!("\t\tBorrows (native): {}", usdc_native_borrows);
         println!("\t\tDeposits (ui): {}", usdc_deposits);
