@@ -1,10 +1,11 @@
+use cypher::{CypherGroup, CypherUser};
 use std::sync::Arc;
-use cypher::states::{CypherUser, CypherGroup};
 use tokio::{
+    select,
     sync::{
-        broadcast::{channel, Receiver}, RwLock, Mutex
-    }, 
-    select
+        broadcast::{channel, Receiver},
+        Mutex, RwLock,
+    },
 };
 
 use crate::CypherInteractiveError;
@@ -21,9 +22,13 @@ impl CypherContext {
     pub fn default() -> Self {
         Self {
             shutdown: Mutex::new(channel::<bool>(1).1),
-            cypher_user_provider_sender: Mutex::new(channel::<Box<CypherUser>>(u16::MAX as usize).1),
+            cypher_user_provider_sender: Mutex::new(
+                channel::<Box<CypherUser>>(u16::MAX as usize).1,
+            ),
             cypher_user: RwLock::new(None),
-            cypher_group_provider_sender: Mutex::new(channel::<Box<CypherGroup>>(u16::MAX as usize).1),
+            cypher_group_provider_sender: Mutex::new(
+                channel::<Box<CypherGroup>>(u16::MAX as usize).1,
+            ),
             cypher_group: RwLock::new(None),
         }
     }
@@ -42,9 +47,7 @@ impl CypherContext {
         }
     }
 
-    pub async fn start(
-        self: &Arc<Self>,
-    ) {
+    pub async fn start(self: &Arc<Self>) {
         let mut shutdown = self.shutdown.lock().await;
         let mut ca_receiver = self.cypher_user_provider_sender.lock().await;
         let mut cg_receiver = self.cypher_group_provider_sender.lock().await;
@@ -78,9 +81,7 @@ impl CypherContext {
         }
     }
 
-    pub async fn get_user(
-        self: &Arc<Self>,
-    ) -> Result<CypherUser, CypherInteractiveError> {
+    pub async fn get_user(self: &Arc<Self>) -> Result<CypherUser, CypherInteractiveError> {
         let maybe_user = self.cypher_user.read().await;
         let user = match *maybe_user {
             Some(u) => u,
@@ -92,9 +93,7 @@ impl CypherContext {
         Ok(user)
     }
 
-    pub async fn get_group(
-        self: &Arc<Self>,
-    ) -> Result<CypherGroup, CypherInteractiveError> {
+    pub async fn get_group(self: &Arc<Self>) -> Result<CypherGroup, CypherInteractiveError> {
         let maybe_group = self.cypher_group.read().await;
         let group = match *maybe_group {
             Some(u) => u,

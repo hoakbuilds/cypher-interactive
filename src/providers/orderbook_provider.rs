@@ -1,16 +1,16 @@
-use arrayref::array_refs;
-use solana_sdk::pubkey::Pubkey;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::sync::{
-    broadcast::{channel, Receiver, Sender},
-    Mutex,
-};
-
-use crate::{
-    accounts_cache::AccountsCache,
-    serum_slab::{OrderBookOrder, Slab},
-    CypherInteractiveError,
+use {
+    crate::{
+        accounts_cache::AccountsCache,
+        serum_slab::{OrderBookOrder, Slab},
+        CypherInteractiveError,
+    },
+    arrayref::array_refs,
+    solana_sdk::pubkey::Pubkey,
+    std::sync::Arc,
+    tokio::sync::{
+        broadcast::{channel, Receiver, Sender},
+        Mutex, RwLock,
+    },
 };
 
 #[derive(Default)]
@@ -106,8 +106,11 @@ impl OrderBookProvider {
     #[allow(clippy::ptr_offset_with_cast)]
     async fn process_updates(self: &Arc<Self>, key: Pubkey) -> Result<(), CypherInteractiveError> {
         let mut updated: bool = false;
-        
-        let maybe_ob_ctx = self.books_keys.iter().find(|ctx| ctx.bids == key || ctx.asks == key);
+
+        let maybe_ob_ctx = self
+            .books_keys
+            .iter()
+            .find(|ctx| ctx.bids == key || ctx.asks == key);
         if maybe_ob_ctx.is_none() {
             return Ok(());
         }
@@ -118,9 +121,7 @@ impl OrderBookProvider {
 
         if maybe_ob.is_none() {
             drop(rb);
-            let ob = Arc::new(
-                OrderBook::new(ob_ctx.market)
-            );
+            let ob = Arc::new(OrderBook::new(ob_ctx.market));
             let mut wb = self.books.write().await;
             wb.push(ob);
             drop(wb);

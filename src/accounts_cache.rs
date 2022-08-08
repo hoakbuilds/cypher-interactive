@@ -39,12 +39,8 @@ impl AccountsCache {
         self.map.insert(key, data);
 
         match self.sender.send(key) {
-            Ok(_) => {
-                Ok(())
-            }
-            Err(_) => {
-                Err(AccountsCacheError::ChannelSendError)
-            }
+            Ok(_) => Ok(()),
+            Err(_) => Err(AccountsCacheError::ChannelSendError),
         }
     }
 }

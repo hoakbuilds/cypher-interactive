@@ -1,53 +1,26 @@
-use std::sync::Arc;
-use anchor_lang::{Owner, ZeroCopy};
-use arrayref::array_ref;
-use bytemuck::checked::from_bytes;
+use anchor_spl::associated_token;
 use cypher::{
-    constants::{B_CYPHER_USER, B_OPEN_ORDERS},
-    quote_mint, states::{CypherGroup, CypherUser},
+    client::init_cypher_user_ix,
+    quote_mint,
+    utils::{derive_cypher_user_address, get_zero_copy_account, parse_dex_account},
+    CypherGroup, CypherUser,
 };
-use cypher_tester::{associated_token, get_request_builder, parse_dex_account};
-use serum_dex::state::{OpenOrders, MarketStateV2};
+use faucet::request_airdrop_ix;
+use serum_dex::state::{MarketStateV2, OpenOrders};
 use solana_account_decoder::parse_token::UiTokenAmount;
 use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClient};
 use solana_sdk::{
-    account::Account,
     commitment_config::CommitmentConfig,
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
-    system_program,
 };
 use spl_associated_token_account::instruction::create_associated_token_account;
+use std::sync::Arc;
 
 use crate::{fast_tx_builder::FastTxnBuilder, CypherInteractiveError};
 
-use super::{get_init_open_orders_ix, get_request_airdrop_ix, get_deposit_collateral_ix};
-
-pub fn get_zero_copy_account<T: ZeroCopy + Owner>(solana_account: &Account) -> Box<T> {
-    let data = &solana_account.data.as_slice();
-    let disc_bytes = array_ref![data, 0, 8];
-    assert_eq!(disc_bytes, &T::discriminator());
-    Box::new(*from_bytes::<T>(&data[8..std::mem::size_of::<T>() + 8]))
-}
-
-pub fn derive_cypher_user_address(group_address: &Pubkey, owner: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[B_CYPHER_USER, group_address.as_ref(), &owner.to_bytes()],
-        &cypher::ID,
-    )
-}
-
-pub fn derive_open_orders_address(dex_market_pk: &Pubkey, cypher_user_pk: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(
-        &[
-            B_OPEN_ORDERS,
-            dex_market_pk.as_ref(),
-            cypher_user_pk.as_ref(),
-        ],
-        &cypher::ID,
-    ).0
-}
+use super::{get_deposit_collateral_ix, get_init_open_orders_ix};
 
 pub fn derive_quote_token_address(wallet_address: Pubkey) -> Pubkey {
     Pubkey::find_program_address(
@@ -107,26 +80,19 @@ pub async fn get_or_init_cypher_user(
     rpc_client: Arc<RpcClient>,
     cluster: String,
 ) -> Result<Box<CypherUser>, CypherInteractiveError> {
-    let account_state = fetch_cypher_user(
-        cypher_user_pubkey,
-        Arc::clone(&rpc_client)
-    ).await;
+    let account_state = fetch_cypher_user(cypher_user_pubkey, Arc::clone(&rpc_client)).await;
 
     if account_state.is_ok() {
         let account = account_state.unwrap();
         Ok(account)
     } else {
         println!("Cypher user account does not existing, creating account.");
-        let res = init_cypher_user(
-            cypher_group_pubkey,
-            owner,
-            Arc::clone(&rpc_client)
-        ).await;
+        let res = init_cypher_user(cypher_group_pubkey, owner, Arc::clone(&rpc_client)).await;
 
         match res {
             Ok(s) => {
                 println!("Successfully created cypher user account: https://explorer.solana.com/tx/{}?cluster={}", s, cluster);
-            },
+            }
             Err(e) => {
                 return Err(e);
             }
@@ -149,9 +115,11 @@ async fn fetch_cypher_user(
         .await;
 
     if res.is_err() {
-        return Err(CypherInteractiveError::CouldNotFetchCypherUser(res.err().unwrap()));
+        return Err(CypherInteractiveError::CouldNotFetchCypherUser(
+            res.err().unwrap(),
+        ));
     }
-    
+
     let maybe_account = res.unwrap().value;
 
     if maybe_account.is_some() {
@@ -168,22 +136,9 @@ pub async fn init_cypher_user(
     rpc: Arc<RpcClient>,
 ) -> Result<Signature, CypherInteractiveError> {
     let (address, bump) = derive_cypher_user_address(group_address, &owner.pubkey());
-
-    let ixs = get_request_builder()
-        .accounts(cypher::accounts::InitCypherUser {
-            cypher_group: *group_address,
-            cypher_user: address,
-            owner: owner.pubkey(),
-            system_program: system_program::id(),
-        })
-        .args(cypher::instruction::InitCypherUser { bump })
-        .instructions()
-        .unwrap();
-
+    let ix = init_cypher_user_ix(group_address, &address, &owner.pubkey(), bump);
     let mut builder = FastTxnBuilder::new();
-    for ix in ixs {
-        builder.add(ix);
-    }
+    builder.add(ix);
     let hash_res = rpc.get_latest_blockhash().await;
     let hash = match hash_res {
         Ok(h) => h,
@@ -209,7 +164,7 @@ pub async fn get_or_init_open_orders(
     cypher_market: &Pubkey,
     open_orders: &Pubkey,
     rpc_client: Arc<RpcClient>,
-    cluster: String
+    cluster: String,
 ) -> Result<OpenOrders, CypherInteractiveError> {
     let account_state = fetch_open_orders(open_orders, Arc::clone(&rpc_client)).await;
 
@@ -234,9 +189,9 @@ pub async fn get_or_init_open_orders(
         .await;
 
         match res {
-            Ok(s) => {                
+            Ok(s) => {
                 println!("Successfully created open orders account: https://explorer.solana.com/tx/{}?cluster={}", s, cluster);
-            },
+            }
             Err(e) => {
                 return Err(e);
             }
@@ -255,11 +210,13 @@ async fn fetch_open_orders(
     let res = rpc_client
         .get_account_with_commitment(open_orders, CommitmentConfig::confirmed())
         .await;
-        
+
     if res.is_err() {
-        return Err(CypherInteractiveError::CouldNotFetchOpenOrders(res.err().unwrap()));
+        return Err(CypherInteractiveError::CouldNotFetchOpenOrders(
+            res.err().unwrap(),
+        ));
     }
-    
+
     let maybe_account = res.unwrap().value;
 
     if maybe_account.is_some() {
@@ -278,7 +235,7 @@ pub async fn init_open_orders(
     signer: &Keypair,
     rpc_client: Arc<RpcClient>,
 ) -> Result<Signature, CypherInteractiveError> {
-    let ixs = get_init_open_orders_ix(
+    let ix = get_init_open_orders_ix(
         cypher_group_pubkey,
         cypher_user_pubkey,
         cypher_market,
@@ -287,31 +244,25 @@ pub async fn init_open_orders(
     );
 
     let mut builder = FastTxnBuilder::new();
-    for ix in ixs {
-        builder.add(ix);
-    }
+    builder.add(ix);
+
     let hash = rpc_client.get_latest_blockhash().await.unwrap();
     let tx = builder.build(hash, signer, None);
     let res = rpc_client
         .send_and_confirm_transaction_with_spinner(&tx)
         .await;
     match res {
-        Ok(s) => {
-            Ok(s)
-        }
-        Err(e) => {
-            Err(CypherInteractiveError::CouldNotCreateOpenOrders(e))
-        }
+        Ok(s) => Ok(s),
+        Err(e) => Err(CypherInteractiveError::CouldNotCreateOpenOrders(e)),
     }
 }
-
 
 pub async fn request_airdrop(
     owner: &Keypair,
     rpc_client: Arc<RpcClient>,
 ) -> Result<Signature, CypherInteractiveError> {
     let token_account = derive_quote_token_address(owner.pubkey());
-    let airdrop_ix = get_request_airdrop_ix(&token_account, 10_000_000_000);
+    let airdrop_ix = request_airdrop_ix(&token_account, 10_000_000_000);
 
     let mut builder = FastTxnBuilder::new();
 
@@ -331,9 +282,7 @@ pub async fn request_airdrop(
             ));
         }
     }
-    for ix in airdrop_ix {
-        builder.add(ix);
-    }
+    builder.add(airdrop_ix);
 
     let hash = rpc_client.get_latest_blockhash().await.unwrap();
     let tx = builder.build(hash, owner, None);
@@ -341,9 +290,7 @@ pub async fn request_airdrop(
         .send_and_confirm_transaction_with_spinner(&tx)
         .await;
     match res {
-        Ok(s) => {
-            Ok(s)
-        }
+        Ok(s) => Ok(s),
         Err(e) => {
             println!("There was an error requesting airdrop: {}", e);
             Err(CypherInteractiveError::Airdrop)
@@ -360,7 +307,7 @@ pub async fn deposit_quote_token(
 ) -> Result<Signature, CypherInteractiveError> {
     let source_ata = derive_quote_token_address(owner.pubkey());
 
-    let ixs = get_deposit_collateral_ix(
+    let ix = get_deposit_collateral_ix(
         &cypher_group.self_address,
         cypher_user_pubkey,
         &cypher_group.quote_vault(),
@@ -369,9 +316,7 @@ pub async fn deposit_quote_token(
         amount,
     );
     let mut builder = FastTxnBuilder::new();
-    for ix in ixs {
-        builder.add(ix);
-    }
+    builder.add(ix);
     let hash = rpc_client.get_latest_blockhash().await.unwrap();
     let tx = builder.build(hash, owner, None);
     let res = rpc_client
@@ -379,11 +324,12 @@ pub async fn deposit_quote_token(
         .await;
 
     match res {
-        Ok(s) => {
-            Ok(s)
-        }
+        Ok(s) => Ok(s),
         Err(e) => {
-            println!("There was an error depositing funds into cypher account: {}", e);
+            println!(
+                "There was an error depositing funds into cypher account: {}",
+                e
+            );
             Err(CypherInteractiveError::Deposit)
         }
     }

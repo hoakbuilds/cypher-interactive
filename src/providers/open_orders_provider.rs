@@ -1,13 +1,14 @@
-use cypher_tester::parse_dex_account;
-use serum_dex::state::OpenOrders;
-use solana_sdk::pubkey::Pubkey;
-use std::sync::Arc;
-use tokio::sync::{
-    broadcast::{channel, Receiver, Sender},
-    Mutex,
+use {
+    crate::{accounts_cache::AccountsCache, CypherInteractiveError},
+    cypher::utils::parse_dex_account,
+    serum_dex::state::OpenOrders,
+    solana_sdk::pubkey::Pubkey,
+    std::sync::Arc,
+    tokio::sync::{
+        broadcast::{channel, Receiver, Sender},
+        Mutex,
+    },
 };
-
-use crate::{accounts_cache::AccountsCache, CypherInteractiveError};
 
 #[derive(Clone)]
 pub struct OpenOrdersContext {
@@ -76,13 +77,12 @@ impl OpenOrdersProvider {
     }
 
     async fn process_updates(&self, key: Pubkey) -> Result<(), CypherInteractiveError> {
-
         for oo_pk in &self.open_orders_pks {
             if key == *oo_pk {
                 let ai = self.cache.get(&key).unwrap();
-    
+
                 let dex_open_orders: OpenOrders = parse_dex_account(ai.account.data.to_vec());
-    
+
                 match self.sender.send(OpenOrdersContext {
                     open_orders: dex_open_orders,
                     pubkey: key,
@@ -94,7 +94,7 @@ impl OpenOrdersProvider {
                         return Err(CypherInteractiveError::ChannelSend);
                     }
                 }
-            }    
+            }
         }
 
         Ok(())

@@ -1,30 +1,40 @@
-use std::{io::{self, Write}, sync::Arc, str::FromStr};
+use std::{
+    io::{self, Write},
+    str::FromStr,
+    sync::Arc,
+};
 
-use cypher::{states::{CypherGroup, CypherUser}, constants::QUOTE_TOKEN_IDX};
+use cypher::{
+    constants::QUOTE_TOKEN_IDX, utils::derive_open_orders_address, CypherGroup, CypherUser,
+};
 use jet_proto_math::Number;
 use safe_transmute::util;
 use serum_dex::{matching::Side, state::OpenOrders};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
-use tokio::{sync::broadcast::{Sender, channel}, select, task::JoinHandle};
+use tokio::{
+    select,
+    sync::broadcast::{channel, Sender},
+    task::JoinHandle,
+};
 
 use crate::{
-    CypherInteractiveError,
-    market_handler::{
-        LimitOrderInfo, MarketOrderInfo, Handler, MarketContext, CancelOrderInfo, HandlerContext
-    },
-    cypher_context::CypherContext,
-    config::CypherConfig,
-    providers::{
-        OrderBookProvider, OpenOrdersProvider, CypherAccountProvider, CypherGroupProvider, OrderBookContext, OrderBook, OpenOrdersContext
-    },
     accounts_cache::AccountsCache,
-    services::{
-        AccountInfoService, ChainMetaService
+    config::CypherConfig,
+    cypher_context::CypherContext,
+    market_handler::{
+        CancelOrderInfo, Handler, HandlerContext, LimitOrderInfo, MarketContext, MarketOrderInfo,
     },
+    providers::{
+        CypherAccountProvider, CypherGroupProvider, OpenOrdersContext, OpenOrdersProvider,
+        OrderBook, OrderBookContext, OrderBookProvider,
+    },
+    services::{AccountInfoService, ChainMetaService},
     utils::{
-        derive_open_orders_address, get_or_init_open_orders, get_serum_market, get_open_orders_with_qty, request_airdrop, deposit_quote_token
-    }
+        deposit_quote_token, get_open_orders_with_qty, get_or_init_open_orders, get_serum_market,
+        request_airdrop,
+    },
+    CypherInteractiveError,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -99,7 +109,9 @@ impl InteractiveCli {
             cypher_user_provider: Arc::new(CypherAccountProvider::default()),
             cypher_user_provider_sender: Arc::new(channel::<Box<CypherUser>>(u16::MAX as usize).0),
             cypher_group_provider: Arc::new(CypherGroupProvider::default()),
-            cypher_group_provider_sender: Arc::new(channel::<Box<CypherGroup>>(u16::MAX as usize).0),
+            cypher_group_provider_sender: Arc::new(
+                channel::<Box<CypherGroup>>(u16::MAX as usize).0,
+            ),
             open_orders_provider: Arc::new(OpenOrdersProvider::default()),
             orderbook_provider: Arc::new(OrderBookProvider::default()),
             handlers: Vec::new(),
@@ -108,19 +120,19 @@ impl InteractiveCli {
         }
     }
 
-    pub async fn start(
-        mut self
-    ) -> Result<(), CypherInteractiveError> {
-        
+    pub async fn start(mut self) -> Result<(), CypherInteractiveError> {
         // launch all necessary services to operate in all available markets
         match self.start_services().await {
             Ok(_) => (),
             Err(e) => {
-                println!("An error occurred while starting the application services: {:?}", e);
-                return Err(e)
-            },
+                println!(
+                    "An error occurred while starting the application services: {:?}",
+                    e
+                );
+                return Err(e);
+            }
         }
-        
+
         let ai_service = Arc::clone(&self.ai_service);
         // start the services
         let ai_t = tokio::spawn(async move {
@@ -139,7 +151,7 @@ impl InteractiveCli {
             cgp.start().await;
         });
         self.tasks.push(cg_t);
-        
+
         let cat = Arc::clone(&self.cypher_user_provider);
         let ca_t = tokio::spawn(async move {
             cat.start().await;
@@ -174,17 +186,17 @@ impl InteractiveCli {
         match self.run().await {
             Ok(_) => (),
             Err(e) => {
-                println!("There was an error while running the interactive command line: {:?}", e);
+                println!(
+                    "There was an error while running the interactive command line: {:?}",
+                    e
+                );
             }
         }
 
         Ok(())
     }
 
-    async fn start_services(
-        &mut self
-    ) -> Result<(), CypherInteractiveError> {
-
+    async fn start_services(&mut self) -> Result<(), CypherInteractiveError> {
         let mut ais_pks: Vec<Pubkey> = Vec::new();
         let mut ob_ctxs: Vec<OrderBookContext> = Vec::new();
         let mut open_orders_pks: Vec<Pubkey> = Vec::new();
@@ -194,14 +206,13 @@ impl InteractiveCli {
         // unbounded channel for the accounts cache to send messages whenever a given account gets updated
         let (accounts_cache_s, _) = channel::<Pubkey>(u16::MAX as usize);
         self.accounts_cache_sender = accounts_cache_s;
-        self.accounts_cache =
-            Arc::new(AccountsCache::new(self.accounts_cache_sender.clone()));
+        self.accounts_cache = Arc::new(AccountsCache::new(self.accounts_cache_sender.clone()));
 
         self.cm_service = Arc::new(ChainMetaService::new(
             Arc::clone(&self.rpc_client),
             self.shutdown.subscribe(),
         ));
-        
+
         let (ca_s, _) = channel::<Box<CypherUser>>(u16::MAX as usize);
         let arc_ca_s = Arc::new(ca_s);
         self.cypher_user_provider_sender = Arc::clone(&arc_ca_s);
@@ -226,7 +237,7 @@ impl InteractiveCli {
 
         let (ob_s, _) = channel::<Arc<OrderBook>>(u16::MAX as usize);
         let arc_ob_s = Arc::new(ob_s);
-        
+
         let (oo_s, _) = channel::<OpenOrdersContext>(u16::MAX as usize);
         let arc_oo_s = Arc::new(oo_s);
 
@@ -236,8 +247,10 @@ impl InteractiveCli {
             let dex_market_pk = Pubkey::from_str(&market.address).unwrap();
             let dex_market_account = match get_serum_market(
                 Arc::clone(&self.rpc_client),
-                dex_market_pk
-            ).await {
+                dex_market_pk,
+            )
+            .await
+            {
                 Ok(m) => m,
                 Err(e) => {
                     println!("An error occurred while fetching the serum market account for {}. Ignoring market. Error: {}", market.name, e);
@@ -245,10 +258,7 @@ impl InteractiveCli {
                 }
             };
 
-            let open_orders_pk = derive_open_orders_address(
-                &dex_market_pk,
-                &self.cypher_user_pk
-            );
+            let open_orders_pk = derive_open_orders_address(&dex_market_pk, &self.cypher_user_pk).0;
             open_orders_pks.push(open_orders_pk);
 
             let _ooa = match get_or_init_open_orders(
@@ -258,33 +268,38 @@ impl InteractiveCli {
                 &dex_market_pk,
                 &open_orders_pk,
                 Arc::clone(&self.rpc_client),
-                self.cluster.to_string()
-            ).await {
+                self.cluster.to_string(),
+            )
+            .await
+            {
                 Ok(ooa) => ooa,
                 Err(e) => {
                     println!("An error occurred while fetching or creating open orders account for {}. Ignoring market. Error: {:?}", market.name, e);
                     continue;
-                },
+                }
             };
-            println!("Preparing orderbook context for market {}. Market: {} Bids: {} Asks: {}.", market.name, dex_market_pk, dex_market_bids, dex_market_asks);
-            ob_ctxs.push(OrderBookContext{
+            println!(
+                "Preparing orderbook context for market {}. Market: {} Bids: {} Asks: {}.",
+                market.name, dex_market_pk, dex_market_bids, dex_market_asks
+            );
+            ob_ctxs.push(OrderBookContext {
                 market: dex_market_pk,
                 bids: dex_market_bids,
                 asks: dex_market_asks,
                 coin_lot_size: dex_market_account.coin_lot_size,
-                pc_lot_size: dex_market_account.pc_lot_size
+                pc_lot_size: dex_market_account.pc_lot_size,
             });
-            
+
             ais_pks.extend(vec![
                 dex_market_pk,
                 dex_market_bids,
                 dex_market_asks,
-                open_orders_pk
+                open_orders_pk,
             ]);
 
             println!("Preparing handler for market {}.", market.name);
             self.handlers.push(Arc::new(Handler::new(
-                Box::new(MarketContext{
+                Box::new(MarketContext {
                     name: market.name.to_string(),
                     market_index: market.market_index,
                     signer: Arc::clone(&self.keypair),
@@ -296,7 +311,7 @@ impl InteractiveCli {
                 self.shutdown.subscribe(),
                 arc_oo_s.subscribe(),
                 arc_ob_s.subscribe(),
-                Some(dex_market_account)
+                Some(dex_market_account),
             )));
         }
 
@@ -305,7 +320,7 @@ impl InteractiveCli {
             arc_ob_s,
             self.accounts_cache_sender.subscribe(),
             self.shutdown.subscribe(),
-            ob_ctxs
+            ob_ctxs,
         ));
 
         self.open_orders_provider = Arc::new(OpenOrdersProvider::new(
@@ -313,7 +328,7 @@ impl InteractiveCli {
             arc_oo_s,
             self.accounts_cache_sender.subscribe(),
             self.shutdown.subscribe(),
-            open_orders_pks
+            open_orders_pks,
         ));
 
         ais_pks.push(self.cypher_group_pk);
@@ -329,15 +344,13 @@ impl InteractiveCli {
         self.cypher_context = Arc::new(CypherContext::new(
             self.shutdown.subscribe(),
             arc_ca_s.subscribe(),
-            arc_cg_s.subscribe()
+            arc_cg_s.subscribe(),
         ));
-        
+
         Ok(())
     }
-    
-    async fn run(
-        &self
-    ) -> Result<(), CypherInteractiveError> {
+
+    async fn run(&self) -> Result<(), CypherInteractiveError> {
         let mut shutdown = self.shutdown.subscribe();
 
         select! {
@@ -357,9 +370,7 @@ impl InteractiveCli {
         Ok(())
     }
 
-    async fn run_loop(
-        &self
-    ) -> Result<(), CypherInteractiveError> {
+    async fn run_loop(&self) -> Result<(), CypherInteractiveError> {
         println!(
             "Welcome to the cypher.trade interactive CLI.\nType 'help' to get a list of available commands."
         );
@@ -367,8 +378,11 @@ impl InteractiveCli {
         loop {
             let input = match self.read_input() {
                 Ok(i) => i,
-                Err(e) => {                    
-                    println!("There was an error processing the input, please try again. Err: {:?}", e);
+                Err(e) => {
+                    println!(
+                        "There was an error processing the input, please try again. Err: {:?}",
+                        e
+                    );
                     continue;
                 }
             };
@@ -376,9 +390,12 @@ impl InteractiveCli {
             let maybe_command = match get_command(input) {
                 Ok(c) => c,
                 Err(e) => {
-                    println!("There was an error processing the input, please try again. Err: {:?}", e);
+                    println!(
+                        "There was an error processing the input, please try again. Err: {:?}",
+                        e
+                    );
                     None
-                },
+                }
             };
 
             let command = match maybe_command {
@@ -395,17 +412,18 @@ impl InteractiveCli {
             match self.process_command(command.clone()).await {
                 Ok(_) => (),
                 Err(e) => {
-                    println!("Something went wrong while processing the command: {:?}. Err: {:?}", command, e);
+                    println!(
+                        "Something went wrong while processing the command: {:?}. Err: {:?}",
+                        command, e
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 
-    fn read_input(
-        &self
-    ) -> Result<String, CypherInteractiveError> {
+    fn read_input(&self) -> Result<String, CypherInteractiveError> {
         let mut buffer = String::new();
 
         print!(">");
@@ -414,8 +432,11 @@ impl InteractiveCli {
         match io::stdin().read_line(&mut buffer) {
             Ok(_) => (),
             Err(e) => {
-                println!("There was an error processing the input, please try again. Err: {:?}", e);
-            },
+                println!(
+                    "There was an error processing the input, please try again. Err: {:?}",
+                    e
+                );
+            }
         }
         trim_newline(&mut buffer);
 
@@ -424,9 +445,8 @@ impl InteractiveCli {
 
     async fn process_command(
         &self,
-        command: InteractiveCommand
-    ) -> Result<(), CypherInteractiveError>  {
-
+        command: InteractiveCommand,
+    ) -> Result<(), CypherInteractiveError> {
         match command {
             InteractiveCommand::Help => {
                 println!(">>> airdrop \n\t- airdrop quote token (devnet only)");
@@ -439,7 +459,7 @@ impl InteractiveCli {
                 println!(">>> market {{side}} {{symbol}} {{amount}}\n\t- submits a market order on the given order book side at the best available price for the given amount");
                 println!(">>> cancel {{symbol}} {{order_id}}\n\t- cancels the order with the given order id and symbol");
                 println!(">>> exit\n\t- exits the application");
-            },
+            }
             InteractiveCommand::Airdrop => self.airdrop().await,
             InteractiveCommand::Deposit(amount) => self.deposit(amount).await,
             InteractiveCommand::TokensStatus => self.tokens_status().await,
@@ -456,14 +476,20 @@ impl InteractiveCli {
     }
 
     pub fn get_handler(&self, market: String) -> Result<&Arc<Handler>, CypherInteractiveError> {
-        let maybe_handler = self.handlers.iter().find(|h| h.market_context.name == market);
+        let maybe_handler = self
+            .handlers
+            .iter()
+            .find(|h| h.market_context.name == market);
         let handler = match maybe_handler {
             Some(h) => {
                 println!("Found handler for the market {}.", h.market_context.name);
                 h
-            },
+            }
             None => {
-                println!("Could not find a suitable handler for the market: {}.", market);
+                println!(
+                    "Could not find a suitable handler for the market: {}.",
+                    market
+                );
                 return Err(CypherInteractiveError::CouldNotFindHandler);
             }
         };
@@ -471,9 +497,7 @@ impl InteractiveCli {
         Ok(handler)
     }
 
-    async fn airdrop(
-        &self,
-    ) {
+    async fn airdrop(&self) {
         if self.cluster != "devnet" {
             println!("This command is only available for 'devnet' cluster.");
             return;
@@ -483,17 +507,14 @@ impl InteractiveCli {
         match req_res {
             Ok(s) => {
                 println!("Successfully requested airdrop. https://explorer.solana.com/tx/{}?cluster=devnet", s);
-            },
+            }
             Err(e) => {
                 println!("There was an error requesting airdrop: {:?}", e);
-            },
+            }
         }
     }
-    
-    async fn deposit(
-        &self,
-        amount: f64,
-    ) {
+
+    async fn deposit(&self, amount: f64) {
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -508,22 +529,24 @@ impl InteractiveCli {
             &self.cypher_user_pk,
             &group,
             Arc::clone(&self.rpc_client),
-            native_amount as u64
-        ).await;
-        
+            native_amount as u64,
+        )
+        .await;
+
         match res {
             Ok(s) => {
-                println!("Successfully deposited USDC. https://explorer.solana.com/tx/{}?cluster=devnet", s);
-            },
+                println!(
+                    "Successfully deposited USDC. https://explorer.solana.com/tx/{}?cluster=devnet",
+                    s
+                );
+            }
             Err(e) => {
                 println!("There was an error depositing USDC: {:?}", e);
-            },
+            }
         }
     }
 
-    async fn account_status(
-        &self
-    ) {
+    async fn account_status(&self) {
         let cypher_config = &self.cypher_config;
         let group_config = cypher_config.get_group(&self.group).unwrap();
         let maybe_group = self.cypher_context.get_group().await;
@@ -544,7 +567,7 @@ impl InteractiveCli {
         };
 
         let quote_divisor: Number = 10_u64.checked_pow(6).unwrap().into();
-        let (c_ratio, assets_value, liabs_value) = user.get_margin_c_ratio_components(&group).unwrap();
+        let (c_ratio, assets_value, liabs_value) = user.get_margin_c_ratio_components(&group);
         let assets_value_ui = assets_value / quote_divisor;
         let liabs_value_ui = liabs_value / quote_divisor;
         println!("----- Account Status -----");
@@ -554,41 +577,56 @@ impl InteractiveCli {
         println!("\tLiabilities Value (ui): {}", liabs_value_ui);
         println!("\tC Ratio: {}", c_ratio);
         for market in &group_config.markets {
-            let cypher_token = group.get_cypher_token(market.market_index);
+            let cypher_token = group.get_cypher_token(market.market_index).unwrap();
             let maybe_position = user.get_position(market.market_index);
             let position = match maybe_position {
-                Ok(p) => p,
-                Err(_) => {
+                Some(p) => p,
+                None => {
                     continue;
                 }
             };
-            let divisor: Number = 10_u64.checked_pow(cypher_token.decimals() as u32).unwrap().into();
-            let native_borrows = position.native_borrows(cypher_token);
-            let native_deposits = position.native_deposits(cypher_token);
+            let divisor: Number = 10_u64
+                .checked_pow(cypher_token.decimals() as u32)
+                .unwrap()
+                .into();
+            let native_borrows = position.base_borrows();
+            let native_deposits = position.base_deposits();
             let borrows: Number = native_borrows / divisor;
             let deposits: Number = native_deposits / divisor;
-            
+
             println!("\tToken: {}", market.base_symbol);
             println!("\t\tBorrows (native): {}", native_borrows);
             println!("\t\tDeposits (native): {}", native_deposits);
             println!("\t\tBorrows (ui): {}", borrows);
             println!("\t\tDeposits (ui): {}", deposits);
-            println!("\t\tUnsettled coin (native): {}", position.oo_info.coin_free);
-            println!("\t\tUnsettled price coin (native): {}", position.oo_info.pc_free);
-            println!("\t\tLocked coin (native): {}", position.oo_info.coin_total - position.oo_info.coin_free);
-            println!("\t\tLocked price coin (native): {}", position.oo_info.pc_total - position.oo_info.pc_free);
+            println!(
+                "\t\tUnsettled coin (native): {}",
+                position.oo_info.coin_free
+            );
+            println!(
+                "\t\tUnsettled price coin (native): {}",
+                position.oo_info.pc_free
+            );
+            println!(
+                "\t\tLocked coin (native): {}",
+                position.oo_info.coin_total - position.oo_info.coin_free
+            );
+            println!(
+                "\t\tLocked price coin (native): {}",
+                position.oo_info.pc_total - position.oo_info.pc_free
+            );
         }
-        
+
         let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX);
         let maybe_usdc_position = user.get_position(QUOTE_TOKEN_IDX);
         let usdc_position = match maybe_usdc_position {
-            Ok(p) => p,
-            Err(_) => {
+            Some(p) => p,
+            None => {
                 return;
             }
         };
-        let usdc_native_borrows = usdc_position.native_borrows(usdc_token);
-        let usdc_native_deposits = usdc_position.native_deposits(usdc_token);
+        let usdc_native_borrows = usdc_position.base_borrows();
+        let usdc_native_deposits = usdc_position.base_deposits();
         let usdc_borrows = usdc_native_borrows / quote_divisor;
         let usdc_deposits = usdc_native_deposits / quote_divisor;
         println!("\tToken: USDC");
@@ -597,7 +635,7 @@ impl InteractiveCli {
         println!("\t\tDeposits (ui): {}", usdc_deposits);
         println!("\t\tBorrows (ui): {}", usdc_borrows);
         println!("----- Open Orders -----");
-        
+
         for market in &group_config.markets {
             println!("\t----- {} Orders -----", market.name);
             let res = self.get_handler(market.name.to_string());
@@ -609,7 +647,10 @@ impl InteractiveCli {
                 let open_orders = get_open_orders_with_qty(&open_orders_account, &ob).await;
 
                 for order in open_orders {
-                    println!("\t\t{:?} {} for {} - Order ID: {}", order.side, order.quantity, order.price, order.order_id);
+                    println!(
+                        "\t\t{:?} {} for {} - Order ID: {}",
+                        order.side, order.quantity, order.price, order.order_id
+                    );
                 }
             }
             println!("\t----- {} Orders -----", market.name);
@@ -618,9 +659,7 @@ impl InteractiveCli {
         println!("----- Account Status -----");
     }
 
-    async fn markets_status(
-        &self
-    ) {
+    async fn markets_status(&self) {
         let cypher_config = &self.cypher_config;
         let group_config = cypher_config.get_group(&self.group).unwrap();
         let maybe_group = self.cypher_context.get_group().await;
@@ -634,7 +673,7 @@ impl InteractiveCli {
 
         println!("----- Markets Status -----");
         for market in &group_config.markets {
-            let cypher_market = group.get_cypher_market(market.market_index);
+            let cypher_market = group.get_cypher_market(market.market_index).unwrap();
 
             println!(
                 "\tMarket: {}\n\t\tType: {}\n\t\tOracle Price: {}\n\t\tTWAP: {}",
@@ -646,10 +685,8 @@ impl InteractiveCli {
         }
         println!("----- Markets Status -----");
     }
-    
-    async fn tokens_status(
-        &self
-    ) {
+
+    async fn tokens_status(&self) {
         let cypher_config = &self.cypher_config;
         let group_config = cypher_config.get_group(&self.group).unwrap();
         let maybe_group = self.cypher_context.get_group().await;
@@ -663,32 +700,40 @@ impl InteractiveCli {
 
         println!("----- Tokens Status -----");
         for market in &group_config.markets {
-            let cypher_token = group.get_cypher_token(market.market_index);
-            
+            let cypher_token = group.get_cypher_token(market.market_index).unwrap();
+
             println!("\tToken: {}", market.base_symbol);
             println!("\t\tBorrows (native): {}", cypher_token.base_borrows())
         }
 
-        let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX);
+        let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX).unwrap();
         let usdc_native_borrows = usdc_token.base_borrows();
         let usdc_native_deposits = usdc_token.base_deposits();
-        let usdc_borrows = usdc_native_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
-        let usdc_deposits = usdc_native_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
-        let utilization = (usdc_native_borrows.as_u64(0) as f64 * 100.0) / usdc_native_deposits.as_u64(0) as f64;
+        let usdc_borrows =
+            usdc_native_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
+        let usdc_deposits =
+            usdc_native_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
+        let utilization =
+            (usdc_native_borrows.as_u64(0) as f64 * 100.0) / usdc_native_deposits.as_u64(0) as f64;
 
         let borrow_rate = if utilization > usdc_token.config.optimal_util as f64 {
             let extra_util = utilization - usdc_token.config.optimal_util as f64;
-            let slope = (usdc_token.config.max_apr as f64 - usdc_token.config.optimal_apr as f64) / (100.0 - usdc_token.config.optimal_util as f64);
+            let slope = (usdc_token.config.max_apr as f64 - usdc_token.config.optimal_apr as f64)
+                / (100.0 - usdc_token.config.optimal_util as f64);
             usdc_token.config.optimal_apr as f64 + slope * extra_util
         } else {
-            let slope = usdc_token.config.optimal_apr as f64 / usdc_token.config.optimal_util as f64;
+            let slope =
+                usdc_token.config.optimal_apr as f64 / usdc_token.config.optimal_util as f64;
             slope * utilization
         };
 
         let deposit_rate = (borrow_rate * utilization) / 100.0;
 
         println!("\tToken: USDC");
-        println!("\t\tOptimal Utilization: {}", usdc_token.config.optimal_util);
+        println!(
+            "\t\tOptimal Utilization: {}",
+            usdc_token.config.optimal_util
+        );
         println!("\t\tOptimal Rate: {}", usdc_token.config.optimal_apr);
         println!("\t\tMax Rate: {}", usdc_token.config.max_apr);
         println!("\t\tDeposit Rate: {}", deposit_rate);
@@ -700,24 +745,27 @@ impl InteractiveCli {
         println!("----- Account Status -----");
     }
 
-    async fn orderbook_status(
-        &self,
-        info: OrderBookInfo,
-    ) {
+    async fn orderbook_status(&self, info: OrderBookInfo) {
         let maybe_handler = self.get_handler(info.symbol.to_string());
         let handler = match maybe_handler {
             Ok(h) => h,
             Err(_) => {
-                println!("Something went wrong while fetching the handler for market {}", info.symbol);
+                println!(
+                    "Something went wrong while fetching the handler for market {}",
+                    info.symbol
+                );
                 return;
-            },
+            }
         };
 
         let maybe_ob = handler.get_orderbook().await;
         let ob = match maybe_ob {
             Ok(ob) => ob,
             Err(_) => {
-                println!("Something went wrong while fetching orderbook for market {}", info.symbol);
+                println!(
+                    "Something went wrong while fetching orderbook for market {}",
+                    info.symbol
+                );
                 return;
             }
         };
@@ -738,37 +786,49 @@ impl InteractiveCli {
         println!("----- OrderBook Status -----");
         println!("Bids: {:^5} Asks: {:^5}", num_bids, num_asks);
 
-        println!("{:^10} {:^10} | {:^10} {:^10}", "Bid Size", "Bid Price", "Ask Price", "Ask Size");
+        println!(
+            "{:^10} {:^10} | {:^10} {:^10}",
+            "Bid Size", "Bid Price", "Ask Price", "Ask Size"
+        );
         if num_bids >= num_asks {
             for (idx, bid) in bids.iter().enumerate() {
                 let ask = asks.get(idx);
-    
+
                 if ask.is_none() {
-                    println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, 0, 0);
+                    println!(
+                        "{:^10} {:^10} | {:^10} {:^10}",
+                        bid.quantity, bid.price, 0, 0
+                    );
                 } else {
                     let ask = ask.unwrap();
-                    println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, ask.price, ask.quantity);
+                    println!(
+                        "{:^10} {:^10} | {:^10} {:^10}",
+                        bid.quantity, bid.price, ask.price, ask.quantity
+                    );
                 }
             }
         } else {
             for (idx, ask) in asks.iter().enumerate() {
                 let bid = bids.get(idx);
-    
+
                 if bid.is_none() {
-                    println!("{:^10} {:^10} | {:^10} {:^10}", 0, 0, ask.price, ask.quantity);
+                    println!(
+                        "{:^10} {:^10} | {:^10} {:^10}",
+                        0, 0, ask.price, ask.quantity
+                    );
                 } else {
                     let bid = bid.unwrap();
-                    println!("{:^10} {:^10} | {:^10} {:^10}", bid.quantity, bid.price, ask.price, ask.quantity);
+                    println!(
+                        "{:^10} {:^10} | {:^10} {:^10}",
+                        bid.quantity, bid.price, ask.price, ask.quantity
+                    );
                 }
             }
-        }        
+        }
         println!("----- OrderBook Status -----");
     }
 
-    async fn limit_order(
-        &self,
-        info: LimitOrderInfo
-    ) {
+    async fn limit_order(&self, info: LimitOrderInfo) {
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -784,12 +844,15 @@ impl InteractiveCli {
                 println!("Cypher user not available.");
                 return;
             }
-        };        
+        };
         let maybe_handler = self.get_handler(info.symbol.to_string());
         let handler = match maybe_handler {
             Ok(h) => h,
-            Err(e) => {                                
-                println!("Could not find an handler for market {}. Err: {:?}", info.symbol, e);
+            Err(e) => {
+                println!(
+                    "Could not find an handler for market {}. Err: {:?}",
+                    info.symbol, e
+                );
                 return;
             }
         };
@@ -801,18 +864,18 @@ impl InteractiveCli {
         };
         match handler.limit_order(ctx, &info).await {
             Ok(s) => {
-                println!("Successfully placed order. https://explorer.solana.com/tx/{}?cluster=devnet", s);                
-            },
+                println!(
+                    "Successfully placed order. https://explorer.solana.com/tx/{}?cluster=devnet",
+                    s
+                );
+            }
             Err(e) => {
                 println!("There was an error placing limit order. Err: {:?}", e);
-            },
+            }
         }
     }
-    
-    async fn market_order(
-        &self,
-        info: MarketOrderInfo
-    ) {
+
+    async fn market_order(&self, info: MarketOrderInfo) {
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -828,15 +891,18 @@ impl InteractiveCli {
                 println!("Cypher user not available.");
                 return;
             }
-        };        
+        };
         let maybe_handler = self.get_handler(info.symbol.to_string());
         let handler = match maybe_handler {
             Ok(h) => h,
-            Err(e) => {                                
-                println!("Could not find an handler for market {}. Err: {:?}", info.symbol, e);
+            Err(e) => {
+                println!(
+                    "Could not find an handler for market {}. Err: {:?}",
+                    info.symbol, e
+                );
                 return;
             }
-        };        
+        };
         let hash = self.cm_service.get_latest_blockhash().await;
         let ctx = HandlerContext {
             user: Box::new(user),
@@ -845,18 +911,18 @@ impl InteractiveCli {
         };
         match handler.market_order(ctx, &info).await {
             Ok(s) => {
-                println!("Successfully placed order. https://explorer.solana.com/tx/{}?cluster=devnet", s);                
-            },
+                println!(
+                    "Successfully placed order. https://explorer.solana.com/tx/{}?cluster=devnet",
+                    s
+                );
+            }
             Err(e) => {
                 println!("There was an error placing market order. Err: {:?}", e);
-            },
+            }
         }
     }
 
-    async fn cancel_order(
-        &self,
-        info: CancelOrderInfo
-    ) {        
+    async fn cancel_order(&self, info: CancelOrderInfo) {
         let maybe_group = self.cypher_context.get_group().await;
         let group = match maybe_group {
             Ok(g) => g,
@@ -876,8 +942,11 @@ impl InteractiveCli {
         let maybe_handler = self.get_handler(info.symbol.to_string());
         let handler = match maybe_handler {
             Ok(h) => h,
-            Err(e) => {                                
-                println!("Could not find an handler for market {}. Err: {:?}", info.symbol, e);
+            Err(e) => {
+                println!(
+                    "Could not find an handler for market {}. Err: {:?}",
+                    info.symbol, e
+                );
                 return;
             }
         };
@@ -889,11 +958,11 @@ impl InteractiveCli {
         };
         match handler.cancel_order(ctx, info.order_id).await {
             Ok(s) => {
-                println!("Successfully cancelled order. https://explorer.solana.com/tx/{}?cluster=devnet", s);                
-            },
+                println!("Successfully cancelled order. https://explorer.solana.com/tx/{}?cluster=devnet", s);
+            }
             Err(e) => {
                 println!("There was an error placing market order. Err: {:?}", e);
-            },
+            }
         }
     }
 }
@@ -919,7 +988,7 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
     }
 
     let command_word = splits[0].to_lowercase();
-    
+
     if command_word == "help" {
         return Ok(Some(InteractiveCommand::Help));
     } else if command_word == "exit" {
@@ -956,12 +1025,11 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
                 return Err(CypherInteractiveError::Input);
             }
         };
-        return Ok(Some(InteractiveCommand::OrderBookStatus(OrderBookInfo{
+        return Ok(Some(InteractiveCommand::OrderBookStatus(OrderBookInfo {
             symbol,
             depth,
         })));
     } else if command_word == "limit" {
-
         if splits.len() < 5 {
             return Ok(None);
         }
@@ -986,19 +1054,17 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
             }
         };
 
-        return Ok(Some(InteractiveCommand::Limit(LimitOrderInfo{
+        return Ok(Some(InteractiveCommand::Limit(LimitOrderInfo {
             symbol,
             price,
             amount,
             side,
         })));
-
     } else if command_word == "market" {
-
         if splits.len() < 4 {
             return Ok(None);
         }
-        
+
         let side = if splits[1] == "buy" {
             Side::Bid
         } else {
@@ -1011,17 +1077,15 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
                 return Err(CypherInteractiveError::Input);
             }
         };
-        
+
         println!("market {:?} {} {}", side, symbol, amount);
 
-        return Ok(Some(InteractiveCommand::Market(MarketOrderInfo{
+        return Ok(Some(InteractiveCommand::Market(MarketOrderInfo {
             symbol,
             amount,
             side,
         })));
-
     } else if command_word == "cancel" {
-
         if splits.len() < 3 {
             return Ok(None);
         }
@@ -1034,9 +1098,9 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
             }
         };
 
-        return Ok(Some(InteractiveCommand::Cancel(CancelOrderInfo{
+        return Ok(Some(InteractiveCommand::Cancel(CancelOrderInfo {
             symbol,
-            order_id
+            order_id,
         })));
     }
 

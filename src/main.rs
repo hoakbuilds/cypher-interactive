@@ -1,23 +1,26 @@
-mod config;
-mod interactive_cli;
-mod cypher_context;
-mod market_handler;
-mod fast_tx_builder;
-mod serum_slab;
-mod utils;
-mod services;
-mod providers;
 mod accounts_cache;
+mod config;
+mod cypher_context;
+mod fast_tx_builder;
+mod interactive_cli;
+mod market_handler;
+mod providers;
+mod serum_slab;
+mod services;
+mod utils;
 
 use config::*;
 
 use clap::Parser;
-use solana_client::{nonblocking::rpc_client::RpcClient, client_error::ClientError};
+use cypher::utils::derive_cypher_user_address;
+use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClient};
+use solana_sdk::{
+    commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Keypair, signer::Signer,
+};
+use std::{fs::File, io::Read, str::FromStr, sync::Arc};
 use tokio::sync::broadcast::channel;
-use std::{fs::File, str::FromStr, io::Read, sync::Arc};
-use solana_sdk::{signature::Keypair, signer::Signer, commitment_config::CommitmentConfig, pubkey::Pubkey};
 
-use crate::{utils::{derive_cypher_user_address, get_or_init_cypher_user}, interactive_cli::InteractiveCli};
+use crate::{interactive_cli::InteractiveCli, utils::get_or_init_cypher_user};
 
 pub const CYPHER_CONFIG_PATH: &str = "./cfg/group.json";
 
@@ -30,7 +33,7 @@ struct Cli {
     cluster: String,
 
     #[clap(short = 'g', long = "group")]
-    group: String
+    group: String,
 }
 
 #[derive(Debug)]
@@ -54,23 +57,23 @@ pub enum CypherInteractiveError {
     OpenOrdersNotAvailable,
     OrderBookNotAvailable,
     InvalidOrderId(u128),
-    TransactionSubmission(ClientError)
+    TransactionSubmission(ClientError),
 }
 
 #[tokio::main]
 async fn main() {
     let args = Cli::parse();
-    
+
     // load keypair
-    let keypair_path = args.keypair.as_path().to_str().unwrap();    
+    let keypair_path = args.keypair.as_path().to_str().unwrap();
     println!("Loading keypair from: {}", keypair_path);
 
     let keypair = load_keypair(keypair_path).unwrap();
     let pubkey = keypair.pubkey();
     println!("Loaded keypair with pubkey: {}", pubkey);
-    
+
     let cypher_config = Arc::new(load_cypher_config(CYPHER_CONFIG_PATH).unwrap());
-    
+
     let cluster = args.cluster;
     let group_name = args.group;
     let cluster_config = cypher_config.get_config_for_cluster(&cluster);
@@ -90,15 +93,22 @@ async fn main() {
         &cypher_group_pk,
         &cypher_user_pk,
         Arc::clone(&rpc_client),
-        cluster.to_string()
-    ).await;
+        cluster.to_string(),
+    )
+    .await;
 
     match cypher_user_res {
         Ok(_) => {
-            println!("Successfully fetched cypher user account with key: {}", cypher_user_pk);            
-        },
+            println!(
+                "Successfully fetched cypher user account with key: {}",
+                cypher_user_pk
+            );
+        }
         Err(e) => {
-            println!("There was an error getting or creating the cypher user account. {:?}", e);
+            println!(
+                "There was an error getting or creating the cypher user account. {:?}",
+                e
+            );
             return;
         }
     }
@@ -116,7 +126,7 @@ async fn main() {
         cypher_user_pk,
         cypher_group_pk,
     );
-    
+
     tokio::select! {
         cli_res = interactive.start() => {
             match cli_res {
@@ -140,7 +150,6 @@ async fn main() {
 }
 
 fn load_keypair(path: &str) -> Result<Keypair, CypherInteractiveError> {
-
     let fd = File::open(path);
 
     let mut file = match fd {
