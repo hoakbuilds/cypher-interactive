@@ -785,7 +785,7 @@ impl InteractiveCli {
         println!("\t\tBorrows (native): {}", usdc_native_borrows);
         println!("\t\tDeposits (ui): {}", usdc_deposits);
         println!("\t\tBorrows (ui): {}", usdc_borrows);
-        println!("----- Account Status -----");
+        println!("----- Tokens Status -----");
     }
 
     async fn orderbook_status(&self, info: OrderBookInfo) {
