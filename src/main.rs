@@ -26,8 +26,11 @@ pub const CYPHER_CONFIG_PATH: &str = "./cfg/group.json";
 
 #[derive(Parser)]
 struct Cli {
-    #[clap(short = 'k', long = "keypair", parse(from_os_str))]
-    keypair: std::path::PathBuf,
+    #[clap(short = 'u', long = "user-keypair", parse(from_os_str))]
+    user_keypair: std::path::PathBuf,
+
+    #[clap(short = 's', long = "signer-keypair", parse(from_os_str))]
+    signer_keypair: std::path::PathBuf,
 
     #[clap(short = 'c', long = "cluster")]
     cluster: String,
@@ -44,6 +47,7 @@ pub enum CypherInteractiveError {
     Input,
     Airdrop,
     Deposit,
+    SetDelegate,
     CouldNotFetchOpenOrders(ClientError),
     CouldNotCreateOpenOrders(ClientError),
     OpenOrdersNotFound,
@@ -64,13 +68,20 @@ pub enum CypherInteractiveError {
 async fn main() {
     let args = Cli::parse();
 
-    // load keypair
-    let keypair_path = args.keypair.as_path().to_str().unwrap();
-    println!("Loading keypair from: {}", keypair_path);
+    // load keypairs
+    let user_keypair_path = args.user_keypair.as_path().to_str().unwrap();
+    println!("Loading user keypair from: {}", user_keypair_path);
 
-    let keypair = load_keypair(keypair_path).unwrap();
-    let pubkey = keypair.pubkey();
-    println!("Loaded keypair with pubkey: {}", pubkey);
+    let user_keypair = load_keypair(user_keypair_path).unwrap();
+    let user_pubkey = user_keypair.pubkey();
+    println!("Loaded user keypair with pubkey: {}", user_pubkey);
+
+    let signer_keypair_path = args.signer_keypair.as_path().to_str().unwrap();
+    println!("Loading signer keypair from: {}", signer_keypair_path);
+
+    let signer_keypair = load_keypair(signer_keypair_path).unwrap();
+    let signer_pubkey = signer_keypair.pubkey();
+    println!("Loaded signer keypair with pubkey: {}", signer_pubkey);
 
     let cypher_config = Arc::new(load_cypher_config(CYPHER_CONFIG_PATH).unwrap());
 
@@ -86,10 +97,10 @@ async fn main() {
 
     let group_config = Arc::new(cypher_config.get_group(&group_name).unwrap());
     let cypher_group_pk = Pubkey::from_str(&group_config.address).unwrap();
-    let cypher_user_pk = derive_cypher_user_address(&cypher_group_pk, &keypair.pubkey()).0;
+    let cypher_user_pk = derive_cypher_user_address(&cypher_group_pk, &user_keypair.pubkey()).0;
 
     let cypher_user_res = get_or_init_cypher_user(
-        &keypair,
+        &user_keypair,
         &cypher_group_pk,
         &cypher_user_pk,
         Arc::clone(&rpc_client),
@@ -114,7 +125,7 @@ async fn main() {
     }
 
     let (shutdown_send, mut _shutdown_recv) = channel::<bool>(1);
-    let arc_kp = Arc::new(keypair);
+    let arc_kp = Arc::new(signer_keypair);
 
     let interactive = InteractiveCli::new(
         Arc::clone(&cypher_config),

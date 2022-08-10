@@ -32,15 +32,17 @@ use crate::{
     services::{AccountInfoService, ChainMetaService},
     utils::{
         deposit_quote_token, get_open_orders_with_qty, get_or_init_open_orders, get_serum_market,
-        request_airdrop,
+        request_airdrop, set_delegate, create_cypher_user,
     },
     CypherInteractiveError,
 };
 
 #[derive(Debug, PartialEq, Clone)]
 enum InteractiveCommand {
+    NewAccount(u64),
     Help,
     Airdrop,
+    Delegate(String),
     Deposit(f64),
     MarketsStatus,
     TokensStatus,
@@ -449,8 +451,10 @@ impl InteractiveCli {
     ) -> Result<(), CypherInteractiveError> {
         match command {
             InteractiveCommand::Help => {
+                println!(">>> new {{account_number}}\n\t- creates a new account with the specified account number");
                 println!(">>> airdrop \n\t- airdrop quote token (devnet only)");
                 println!(">>> deposit {{amount_ui}}\n\t- deposits quote token");
+                println!(">>> delegate {{pubkey}}\n\t- delegates the account to the given public key, delegates cannot close the account or withdraw");
                 println!(">>> status\n\t- displays cypher account status and open orders information for available markets");
                 println!(">>> markets\n\t- displays cypher group's available markets and relevant information");
                 println!(">>> tokens\n\t- displays cypher group's available tokens and relevant information");
@@ -460,7 +464,9 @@ impl InteractiveCli {
                 println!(">>> cancel {{symbol}} {{order_id}}\n\t- cancels the order with the given order id and symbol");
                 println!(">>> exit\n\t- exits the application");
             }
+            InteractiveCommand::NewAccount(account_number) => self.new_account(account_number).await,
             InteractiveCommand::Airdrop => self.airdrop().await,
+            InteractiveCommand::Delegate(pk) => self.delegate(pk).await,
             InteractiveCommand::Deposit(amount) => self.deposit(amount).await,
             InteractiveCommand::TokensStatus => self.tokens_status().await,
             InteractiveCommand::MarketsStatus => self.markets_status().await,
@@ -510,6 +516,42 @@ impl InteractiveCli {
             }
             Err(e) => {
                 println!("There was an error requesting airdrop: {:?}", e);
+            }
+        }
+    }
+
+    async fn new_account(&self, account_number: u64) {
+        let req_res = create_cypher_user(
+            &self.cypher_group_pk, &self.keypair, account_number, Arc::clone(&self.rpc_client)
+        ).await;
+
+        match req_res {
+            Ok(s) => {
+                println!("Successfully created new account with number {}. https://explorer.solana.com/tx/{}?cluster=devnet", account_number, s);
+            }
+            Err(e) => {
+                println!("There was an error creating a new account: {:?}", e);
+            }
+        }
+    }
+
+    async fn delegate(&self, pubkey: String) {
+        let delegate_pk = Pubkey::from_str(&pubkey).unwrap();
+        let req_res = set_delegate(
+            &self.cypher_group_pk,
+            &self.cypher_user_pk,
+            &delegate_pk,
+            &self.keypair,
+            Arc::clone(&self.rpc_client),
+        )
+        .await;
+
+        match req_res {
+            Ok(s) => {
+                println!("Successfully delegated account to {}. https://explorer.solana.com/tx/{}?cluster=devnet", pubkey, s);
+            }
+            Err(e) => {
+                println!("There was an error delegating to account: {:?}", e);
             }
         }
     }
@@ -571,6 +613,7 @@ impl InteractiveCli {
         let assets_value_ui = assets_value / quote_divisor;
         let liabs_value_ui = liabs_value / quote_divisor;
         println!("----- Account Status -----");
+        println!("\tDelegation: {}", user.delegate);
         println!("\tAssets Value (native): {}", assets_value);
         println!("\tLiabilities Value (native): {}", liabs_value);
         println!("\tAssets Value (ui): {}", assets_value_ui);
@@ -1001,6 +1044,25 @@ fn get_command(buffer: String) -> Result<Option<InteractiveCommand>, CypherInter
         return Ok(Some(InteractiveCommand::TokensStatus));
     } else if command_word == "airdrop" {
         return Ok(Some(InteractiveCommand::Airdrop));
+    } else if command_word == "new" {
+        if splits.len() < 2 {
+            return Ok(None);
+        }
+        let amount = match splits[1].parse::<u64>() {
+            Ok(a) => a,
+            Err(_) => {
+                return Err(CypherInteractiveError::Input);
+            }
+        };
+
+        return Ok(Some(InteractiveCommand::NewAccount(amount)));
+    } else if command_word == "delegate" {
+        if splits.len() < 2 {
+            return Ok(None);
+        }
+        let pk = splits[1].to_string();
+
+        return Ok(Some(InteractiveCommand::Delegate(pk)));
     } else if command_word == "deposit" {
         if splits.len() < 2 {
             return Ok(None);

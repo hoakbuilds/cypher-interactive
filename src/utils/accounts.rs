@@ -1,8 +1,11 @@
 use anchor_spl::associated_token;
 use cypher::{
-    client::init_cypher_user_ix,
+    client::{create_cypher_user_ix, init_cypher_user_ix, set_delegate_ix},
     quote_mint,
-    utils::{derive_cypher_user_address, get_zero_copy_account, parse_dex_account},
+    utils::{
+        derive_cypher_user_address, derive_cypher_user_address_with_number, get_zero_copy_account,
+        parse_dex_account,
+    },
     CypherGroup, CypherUser,
 };
 use faucet::request_airdrop_ix;
@@ -294,6 +297,76 @@ pub async fn request_airdrop(
         Err(e) => {
             println!("There was an error requesting airdrop: {}", e);
             Err(CypherInteractiveError::Airdrop)
+        }
+    }
+}
+
+pub async fn create_cypher_user(
+    cypher_group_pubkey: &Pubkey,
+    owner: &Keypair,
+    account_number: u64,
+    rpc_client: Arc<RpcClient>,
+) -> Result<Signature, CypherInteractiveError> {
+    let (cypher_user_pubkey, bump) = derive_cypher_user_address_with_number(
+        cypher_group_pubkey,
+        &owner.pubkey(),
+        account_number,
+    );
+    let create_cypher_user_ix = create_cypher_user_ix(
+        cypher_group_pubkey,
+        &cypher_user_pubkey,
+        &owner.pubkey(),
+        &owner.pubkey(),
+        bump,
+        account_number,
+    );
+    let mut builder = FastTxnBuilder::new();
+
+    builder.add(create_cypher_user_ix);
+
+    let hash = rpc_client.get_latest_blockhash().await.unwrap();
+    let tx = builder.build(hash, owner, None);
+    let res = rpc_client
+        .send_and_confirm_transaction_with_spinner(&tx)
+        .await
+        .unwrap();
+    Ok(res)
+    // match res {
+    //     Ok(s) => Ok(s),
+    //     Err(e) => {
+    //         println!("There was an error setting account delegate: {}", e);
+    //         Err(CypherInteractiveError::SetDelegate)
+    //     }
+    // }
+}
+
+pub async fn set_delegate(
+    cypher_group_pubkey: &Pubkey,
+    cypher_user_pubkey: &Pubkey,
+    delegate: &Pubkey,
+    owner: &Keypair,
+    rpc_client: Arc<RpcClient>,
+) -> Result<Signature, CypherInteractiveError> {
+    let delegate_ix = set_delegate_ix(
+        cypher_group_pubkey,
+        cypher_user_pubkey,
+        &owner.pubkey(),
+        delegate,
+    );
+    let mut builder = FastTxnBuilder::new();
+
+    builder.add(delegate_ix);
+
+    let hash = rpc_client.get_latest_blockhash().await.unwrap();
+    let tx = builder.build(hash, owner, None);
+    let res = rpc_client
+        .send_and_confirm_transaction_with_spinner(&tx)
+        .await;
+    match res {
+        Ok(s) => Ok(s),
+        Err(e) => {
+            println!("There was an error setting account delegate: {}", e);
+            Err(CypherInteractiveError::SetDelegate)
         }
     }
 }
