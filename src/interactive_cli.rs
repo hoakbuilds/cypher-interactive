@@ -8,10 +8,9 @@ use cypher::{
     constants::QUOTE_TOKEN_IDX, utils::derive_open_orders_address, CypherGroup, CypherUser,
 };
 use jet_proto_math::Number;
-use safe_transmute::util;
-use serum_dex::{matching::Side, state::OpenOrders};
+use serum_dex::matching::Side;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{pubkey::Pubkey, signature::Keypair};
 use tokio::{
     select,
     sync::broadcast::{channel, Sender},
@@ -31,8 +30,8 @@ use crate::{
     },
     services::{AccountInfoService, ChainMetaService},
     utils::{
-        deposit_quote_token, get_open_orders_with_qty, get_or_init_open_orders, get_serum_market,
-        request_airdrop, set_delegate, create_cypher_user,
+        create_cypher_user, deposit_quote_token, get_open_orders_with_qty, get_or_init_open_orders,
+        get_serum_market, request_airdrop, set_delegate,
     },
     CypherInteractiveError,
 };
@@ -85,6 +84,7 @@ pub struct InteractiveCli {
 }
 
 impl InteractiveCli {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cypher_config: Arc<CypherConfig>,
         cluster: String,
@@ -464,7 +464,9 @@ impl InteractiveCli {
                 println!(">>> cancel {{symbol}} {{order_id}}\n\t- cancels the order with the given order id and symbol");
                 println!(">>> exit\n\t- exits the application");
             }
-            InteractiveCommand::NewAccount(account_number) => self.new_account(account_number).await,
+            InteractiveCommand::NewAccount(account_number) => {
+                self.new_account(account_number).await
+            }
             InteractiveCommand::Airdrop => self.airdrop().await,
             InteractiveCommand::Delegate(pk) => self.delegate(pk).await,
             InteractiveCommand::Deposit(amount) => self.deposit(amount).await,
@@ -522,8 +524,12 @@ impl InteractiveCli {
 
     async fn new_account(&self, account_number: u64) {
         let req_res = create_cypher_user(
-            &self.cypher_group_pk, &self.keypair, account_number, Arc::clone(&self.rpc_client)
-        ).await;
+            &self.cypher_group_pk,
+            &self.keypair,
+            account_number,
+            Arc::clone(&self.rpc_client),
+        )
+        .await;
 
         match req_res {
             Ok(s) => {
@@ -660,7 +666,6 @@ impl InteractiveCli {
             );
         }
 
-        let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX);
         let maybe_usdc_position = user.get_position(QUOTE_TOKEN_IDX);
         let usdc_position = match maybe_usdc_position {
             Some(p) => p,
@@ -750,39 +755,44 @@ impl InteractiveCli {
         }
 
         let usdc_token = group.get_cypher_token(QUOTE_TOKEN_IDX).unwrap();
-        let usdc_native_borrows = usdc_token.base_borrows();
-        let usdc_native_deposits = usdc_token.base_deposits();
+        let total_deposits = usdc_token.total_deposits();
+        let total_borrows = usdc_token.total_borrows();
+        //let value = total_deposits -  total_borrows;
+        //let total_borrows = total_borrows + value;
         let usdc_borrows =
-            usdc_native_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
+            total_borrows / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
         let usdc_deposits =
-            usdc_native_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
-        let utilization =
-            (usdc_native_borrows.as_u64(0) as f64 * 100.0) / usdc_native_deposits.as_u64(0) as f64;
+            total_deposits / 10_u64.checked_pow(usdc_token.decimals().into()).unwrap();
+        let one_hundred: Number = 100.into();
+        let utilization: Number = (total_borrows * one_hundred) / total_deposits;
 
-        let borrow_rate = if utilization > usdc_token.config.optimal_util as f64 {
-            let extra_util = utilization - usdc_token.config.optimal_util as f64;
-            let slope = (usdc_token.config.max_apr as f64 - usdc_token.config.optimal_apr as f64)
-                / (100.0 - usdc_token.config.optimal_util as f64);
-            usdc_token.config.optimal_apr as f64 + slope * extra_util
+        let optimal_util: Number = Number::from_percent(usdc_token.config.optimal_util);
+        let optimal_apr: Number = Number::from_percent(usdc_token.config.optimal_apr);
+        let max_apr: Number = Number::from_percent(usdc_token.config.max_apr);
+
+        let borrow_rate = if utilization > optimal_util {
+            let extra_util = utilization - optimal_util;
+            let slope = (max_apr - optimal_apr) / (one_hundred - optimal_util);
+            optimal_apr + slope * extra_util
         } else {
-            let slope =
-                usdc_token.config.optimal_apr as f64 / usdc_token.config.optimal_util as f64;
+            let slope = optimal_apr / optimal_util;
             slope * utilization
         };
 
-        let deposit_rate = (borrow_rate * utilization) / 100.0;
+        let deposit_rate = (borrow_rate * utilization) / one_hundred;
 
         println!("\tToken: USDC");
         println!(
             "\t\tOptimal Utilization: {}",
             usdc_token.config.optimal_util
         );
+        println!("\t\tUtilization: {}", utilization);
         println!("\t\tOptimal Rate: {}", usdc_token.config.optimal_apr);
         println!("\t\tMax Rate: {}", usdc_token.config.max_apr);
-        println!("\t\tDeposit Rate: {}", deposit_rate);
-        println!("\t\tBorrow Rate: {}", borrow_rate);
-        println!("\t\tDeposits (native): {}", usdc_native_deposits);
-        println!("\t\tBorrows (native): {}", usdc_native_borrows);
+        println!("\t\tDeposit Rate: {}", deposit_rate * 100);
+        println!("\t\tBorrow Rate: {}", borrow_rate * 100);
+        println!("\t\tDeposits (native): {}", total_deposits);
+        println!("\t\tBorrows (native): {}", total_borrows);
         println!("\t\tDeposits (ui): {}", usdc_deposits);
         println!("\t\tBorrows (ui): {}", usdc_borrows);
         println!("----- Tokens Status -----");

@@ -1,7 +1,7 @@
 use std::convert::identity;
 
 use cypher::{
-    client::{cancel_order_ix, new_order_v3_ix, settle_funds_ix, ToPubkey},
+    client::{cancel_order_v2_ix, new_order_v3_ix, settle_funds_ix, ToPubkey},
     utils::{derive_dex_market_authority, gen_dex_vault_signer_key},
     CypherGroup, CypherMarket, CypherToken,
 };
@@ -128,7 +128,7 @@ pub fn get_cancel_order_ix(
         dex_market_state.vault_signer_nonce,
         &cypher_market.dex_market,
     );
-    cancel_order_ix(
+    cancel_order_v2_ix(
         &cypher_group.self_address,
         &cypher_group.vault_signer,
         cypher_user_pubkey,
